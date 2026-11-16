@@ -1,6 +1,6 @@
 // Service worker: caches the app shell so the app opens offline.
 // Bump CACHE whenever you deploy changes so installed copies refresh.
-const CACHE = 'pocket-ledger-v1';
+const CACHE = 'pocket-ledger-v2';
 const ASSETS = [
   './',
   './index.html',
@@ -8,6 +8,7 @@ const ASSETS = [
   './js/app.js',
   './js/store.js',
   './js/sync.js',
+  './js/config.js',
   './manifest.webmanifest',
   './icons/icon.svg',
   './icons/icon-192.png',

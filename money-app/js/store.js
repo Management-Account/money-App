@@ -10,9 +10,15 @@ export const SCHEMA_VERSION = 1;
 
 // ---------- ids, time, dates ----------
 
+export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export function uid() {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
-  return 'id-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+  // fallback: RFC 4122 v4-shaped id (the database column type is uuid)
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
 }
 
 export const now = () => Date.now();
@@ -76,19 +82,25 @@ export function formatMoney(minor, currency = 'EGP', locale) {
 
 // ---------- state ----------
 
-const DEFAULT_EXPENSE = ['Food', 'Transport', 'Bills', 'Shopping', 'Health', 'Entertainment', 'Other'];
-const DEFAULT_INCOME = ['Salary', 'Other income'];
+// Default categories use FIXED ids and updatedAt 0, so every device creates the same
+// records. Syncing never duplicates them, and any real edit or delete (updatedAt > 0) wins.
+const DEFAULT_CATEGORIES = [
+  ['ff9bb12e-5104-4218-916e-0345c70262e9', 'Food', 'expense'],
+  ['60436924-d91d-49e2-8b3b-2a3b99f552ae', 'Transport', 'expense'],
+  ['52d00da5-182a-4ea5-9f4a-f0e8f7c51741', 'Bills', 'expense'],
+  ['b3ae29d7-ac1d-4bdb-9f3e-d826e98851ed', 'Shopping', 'expense'],
+  ['5338196f-beed-4ba0-999f-8cf8bb4085fb', 'Health', 'expense'],
+  ['3c4ab7f5-6a41-449d-b48b-8e129364eb1d', 'Entertainment', 'expense'],
+  ['8aed19f5-9703-4543-91f3-ddb415f10e11', 'Other', 'expense'],
+  ['0e43b028-f87b-40b2-837b-9b3f96ab8b72', 'Salary', 'income'],
+  ['b4a14e6c-d9b9-45b1-93be-5e5d717f7360', 'Other income', 'income'],
+];
 
 export function createState() {
-  const t = now();
-  const mk = (name, type) => ({ id: uid(), name, type, budget: 0, updatedAt: t });
   return {
     version: SCHEMA_VERSION,
-    settings: { currency: 'EGP' },
-    categories: [
-      ...DEFAULT_EXPENSE.map((n) => mk(n, 'expense')),
-      ...DEFAULT_INCOME.map((n) => mk(n, 'income')),
-    ],
+    settings: { currency: 'EGP', updatedAt: 0 },
+    categories: DEFAULT_CATEGORIES.map(([id, name, type]) => ({ id, name, type, budget: 0, updatedAt: 0 })),
     transactions: [],
   };
 }
@@ -122,8 +134,12 @@ export function mergeCollections(local, remote) {
 }
 
 export function mergeState(local, remote) {
+  const ls = local.settings;
+  const rs = remote.settings;
+  const settings = rs && (rs.updatedAt ?? 0) > (ls.updatedAt ?? 0) ? { ...ls, ...rs } : ls;
   return {
     ...local,
+    settings,
     categories: mergeCollections(local.categories, remote.categories),
     transactions: mergeCollections(local.transactions, remote.transactions),
   };
@@ -135,7 +151,15 @@ export function sanitizeState(obj) {
   const cats = Array.isArray(obj.categories) ? obj.categories : [];
   const txs = Array.isArray(obj.transactions) ? obj.transactions : [];
   const categories = cats
-    .filter((c) => c && typeof c.id === 'string' && typeof c.name === 'string' && (c.type === 'expense' || c.type === 'income'))
+    .filter(
+      (c) =>
+        c &&
+        typeof c.id === 'string' &&
+        UUID_RE.test(c.id) &&
+        typeof c.name === 'string' &&
+        c.name.trim().length > 0 &&
+        (c.type === 'expense' || c.type === 'income'),
+    )
     .map((c) => ({
       id: c.id,
       name: c.name.slice(0, 60),
@@ -149,6 +173,7 @@ export function sanitizeState(obj) {
       (t) =>
         t &&
         typeof t.id === 'string' &&
+        UUID_RE.test(t.id) &&
         (t.type === 'expense' || t.type === 'income') &&
         Number.isSafeInteger(t.amount) &&
         t.amount > 0 &&
@@ -164,8 +189,10 @@ export function sanitizeState(obj) {
       updatedAt: Number.isFinite(t.updatedAt) ? t.updatedAt : 0,
       ...(t.deleted ? { deleted: true } : {}),
     }));
-  const currency = typeof obj.settings?.currency === 'string' ? obj.settings.currency.toUpperCase().slice(0, 3) : 'EGP';
-  return { version: SCHEMA_VERSION, settings: { currency }, categories, transactions };
+  const cur = typeof obj.settings?.currency === 'string' ? obj.settings.currency.toUpperCase() : '';
+  const currency = /^[A-Z]{3}$/.test(cur) ? cur : 'EGP';
+  const updatedAt = Number.isFinite(obj.settings?.updatedAt) ? obj.settings.updatedAt : 0;
+  return { version: SCHEMA_VERSION, settings: { currency, updatedAt }, categories, transactions };
 }
 
 // ---------- summaries ----------

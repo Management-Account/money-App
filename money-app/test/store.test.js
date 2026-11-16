@@ -1,4 +1,6 @@
 import test from 'node:test';
+const C1 = '11111111-1111-4111-8111-111111111111';
+const T1 = '22222222-2222-4222-8222-222222222222';
 import assert from 'node:assert/strict';
 import {
   toMinor, fromMinor, createState, upsert, remove, mergeCollections, mergeState, summarize, toCSV, parseCSV, importCSV,
@@ -97,11 +99,17 @@ test('importCSV rejects bad files and skips bad rows', () => {
 test('sanitizeState drops malformed records and keeps valid ones', () => {
   const clean = sanitizeState({
     settings: { currency: 'usd' },
-    categories: [{ id: 'c1', name: 'Food', type: 'expense', budget: 100, updatedAt: 1 }, { id: 5 }],
+    categories: [
+      { id: C1, name: 'Food', type: 'expense', budget: 100, updatedAt: 1 },
+      { id: 5 },
+      { id: 'not-a-uuid', name: 'Bad id', type: 'expense' },
+      { id: '11111111-1111-4111-8111-111111111112', name: '  ', type: 'expense' },
+    ],
     transactions: [
-      { id: 't1', type: 'expense', amount: 500, date: '2026-11-01', categoryId: 'c1', note: 'x', updatedAt: 1 },
-      { id: 't2', type: 'expense', amount: 1.5, date: '2026-11-01' },
-      { id: 't3', type: 'weird', amount: 5, date: '2026-11-01' },
+      { id: T1, type: 'expense', amount: 500, date: '2026-11-01', categoryId: C1, note: 'x', updatedAt: 1 },
+      { id: '22222222-2222-4222-8222-222222222223', type: 'expense', amount: 1.5, date: '2026-11-01' },
+      { id: '22222222-2222-4222-8222-222222222224', type: 'weird', amount: 5, date: '2026-11-01' },
+      { id: 'tx-1', type: 'expense', amount: 5, date: '2026-11-01' },
     ],
   });
   assert.equal(clean.categories.length, 1);
@@ -115,4 +123,29 @@ test('mergeState combines two devices', () => {
   const a = { ...base, transactions: upsert([], { id: 'x', type: 'expense', amount: 100, categoryId: '', date: '2026-11-01', note: 'A' }) };
   const b = { ...base, transactions: upsert([], { id: 'y', type: 'expense', amount: 200, categoryId: '', date: '2026-11-02', note: 'B' }) };
   assert.equal(mergeState(a, b).transactions.length, 2);
+});
+
+test('default categories are identical on every device and never duplicate when merged', () => {
+  const a = createState();
+  const b = createState();
+  assert.deepEqual(a.categories, b.categories);
+  assert.equal(mergeState(a, b).categories.length, 9);
+});
+
+test('a real edit or delete of a default category beats the untouched default on another device', () => {
+  const a = createState();
+  const b = createState();
+  b.categories = remove(b.categories, b.categories[0].id); // device B deleted "Food"
+  const merged = mergeState(a, b); // device A still has the untouched default
+  assert.equal(live(merged.categories).length, 8);
+  const renamed = createState();
+  renamed.categories = upsert(renamed.categories, { ...renamed.categories[1], name: 'Taxi' });
+  assert.equal(mergeState(a, renamed).categories[1].name, 'Taxi');
+});
+
+test('settings merge: newest change wins, missing remote settings keep local', () => {
+  const local = { ...createState(), settings: { currency: 'EGP', updatedAt: 5 } };
+  assert.equal(mergeState(local, { categories: [], transactions: [], settings: { currency: 'USD', updatedAt: 9 } }).settings.currency, 'USD');
+  assert.equal(mergeState(local, { categories: [], transactions: [], settings: { currency: 'USD', updatedAt: 2 } }).settings.currency, 'EGP');
+  assert.equal(mergeState(local, { categories: [], transactions: [] }).settings.currency, 'EGP');
 });

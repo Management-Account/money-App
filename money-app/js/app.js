@@ -2,7 +2,10 @@ import {
   SCHEMA_VERSION, uid, todayStr, monthKey, shiftMonth, toMinor, fromMinor, formatMoney, createState, live, upsert, remove,
   mergeState, sanitizeState, summarize, toCSV, importCSV, isValidDate,
 } from './store.js';
-import { syncNow, syncEnabled } from './sync.js';
+import {
+  cloudEnabled, AuthError, NetworkError, getSession, getOwner, setOwner, signUp, signIn, signOut, sendPasswordReset,
+  sessionFromHash, setPassword, syncNow,
+} from './sync.js';
 
 const KEY = 'pocketledger.v1';
 const $ = (sel) => document.querySelector(sel);
@@ -17,7 +20,10 @@ function load() {
     const raw = localStorage.getItem(KEY);
     if (raw) {
       const s = JSON.parse(raw);
-      if (s && s.version === SCHEMA_VERSION) return s;
+      if (s && s.version === SCHEMA_VERSION) {
+        s.settings = { currency: 'EGP', updatedAt: 0, ...s.settings };
+        return s;
+      }
     }
   } catch {
     /* fall through to a fresh state */
@@ -26,8 +32,10 @@ function load() {
 }
 
 let state = load();
-const ui = { tab: 'home', month: monthKey(todayStr()), q: '' };
+// auth: 'signin' | 'signup' | 'forgot' | 'reset' (reset = choosing a new password after an email link)
+const ui = { tab: 'home', month: monthKey(todayStr()), q: '', auth: 'signin', notice: '', busy: false };
 let deferredInstall = null;
+const syncInfo = { lastAt: 0, error: '' };
 
 function save() {
   try {
@@ -41,6 +49,76 @@ function setState(next) {
   state = next;
   save();
   render();
+  scheduleSync();
+}
+
+// ---------- cloud sync ----------
+
+let inflight = null;
+let again = false;
+let syncTimer;
+
+function scheduleSync(delay = 1500) {
+  if (!cloudEnabled || !getSession()) return;
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(runSync, delay);
+}
+
+// Resolves true when the sync succeeded.
+function runSync() {
+  if (!cloudEnabled || !getSession() || ui.auth === 'reset') return Promise.resolve(false);
+  if (inflight) {
+    again = true;
+    return inflight;
+  }
+  inflight = (async () => {
+    let ok = false;
+    updateSyncLine();
+    try {
+      const merged = await syncNow(state);
+      // keep any edits the person made while the sync was running (newest edit per record wins)
+      state = mergeState(state, merged);
+      save();
+      syncInfo.lastAt = Date.now();
+      syncInfo.error = '';
+      ok = true;
+    } catch (e) {
+      if (e instanceof AuthError) syncInfo.error = e.message;
+      else if (e instanceof NetworkError) syncInfo.error = 'offline';
+      else syncInfo.error = e.message || 'Sync failed';
+    } finally {
+      inflight = null;
+    }
+    refreshView();
+    if (again) {
+      again = false;
+      return runSync();
+    }
+    return ok;
+  })();
+  return inflight;
+}
+
+function syncText() {
+  if (!cloudEnabled || !getSession()) return '';
+  if (inflight) return 'Syncing…';
+  if (syncInfo.error === 'offline') return 'Offline. Your changes will sync when you reconnect.';
+  if (syncInfo.error) return `Sync problem: ${syncInfo.error}`;
+  if (syncInfo.lastAt) return `Synced at ${new Date(syncInfo.lastAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+  return '';
+}
+
+function updateSyncLine() {
+  document.querySelectorAll('.syncline').forEach((el) => (el.textContent = syncText()));
+}
+
+// Re-draw after a background sync without stealing focus from the search box.
+function refreshView() {
+  if (!getSession() && cloudEnabled) return render(); // session ended: show the sign-in screen
+  if (document.activeElement?.id === 'q') {
+    $('#txlist').innerHTML = txListHTML();
+    updateSyncLine();
+  } else render();
 }
 
 // ---------- helpers ----------
@@ -165,7 +243,7 @@ function barsHTML(s) {
 
 function viewHome() {
   const s = summarize(state, ui.month);
-  return `<h1>Overview</h1>${monthSwitcher()}
+  return `<h1>Overview</h1><div class="syncline hint" aria-live="polite">${esc(syncText())}</div>${monthSwitcher()}
     <div class="cards">
       <div class="card stat"><div class="label">Income</div><div class="value income">${esc(money(s.income))}</div></div>
       <div class="card stat"><div class="label">Expenses</div><div class="value expense">${esc(money(s.expense))}</div></div>
@@ -202,8 +280,26 @@ function viewCategories() {
     ${section('expense', 'Expense categories')}${section('income', 'Income categories')}`;
 }
 
+function accountCard() {
+  const s = getSession();
+  if (!cloudEnabled) {
+    return `<div class="card"><p class="hint" style="margin:0">Accounts and cloud sync are not set up yet, so your data stays on this device only.
+      To turn them on, add your Supabase URL and key to <code>js/config.js</code> (see the README).</p></div>`;
+  }
+  return `<div class="card">
+    <div>Signed in as <strong>${esc(s?.user.email || '')}</strong></div>
+    <div class="syncline hint" aria-live="polite" style="margin:4px 0 12px">${esc(syncText())}</div>
+    <div class="btns">
+      <button class="btn" data-action="sync">Sync now</button>
+      <button class="btn" data-action="signout">Sign out</button>
+    </div>
+  </div>`;
+}
+
 function viewSettings() {
   return `<h1>Settings</h1>
+    <h2>Account</h2>${accountCard()}
+    <h2>Preferences</h2>
     <div class="card">
       <div class="field"><label for="cur">Currency code (e.g. EGP, USD, EUR, SAR)</label>
         <input type="text" id="cur" maxlength="3" value="${esc(state.settings.currency)}" list="curs" autocapitalize="characters" autocomplete="off">
@@ -212,21 +308,62 @@ function viewSettings() {
     </div>
     <h2>Your data</h2>
     <div class="card">
-      <p class="hint" style="margin-top:0">Data is stored on this device only (offline-first). Cloud sync between PC and phone comes next.
-        Use a backup to move data between devices in the meantime.</p>
+      <p class="hint" style="margin-top:0">${cloudEnabled ? 'Your data is saved to your account and works offline.' : 'Your data is stored on this device only.'}
+        You can also keep your own copy as a file.</p>
       <div class="btns">
         <button class="btn" data-action="export-csv">Export CSV</button>
         <button class="btn" data-action="export-json">Backup (JSON)</button>
         <button class="btn" data-action="import">Import CSV / backup</button>
-        ${syncEnabled ? '<button class="btn" data-action="sync">Sync now</button>' : ''}
-        ${deferredInstall ? '<button class="btn primary" data-action="install">Install app</button>' : ''}
+        ${deferredInstall ? '<button class="btn" data-action="install">Add to home screen</button>' : ''}
       </div>
     </div>
     <h2>Danger zone</h2>
-    <div class="card"><button class="btn danger" data-action="reset">Delete all data on this device</button></div>`;
+    <div class="card"><button class="btn danger" data-action="reset">Delete all transactions</button></div>`;
+}
+
+// ---------- sign in / sign up screen ----------
+
+function viewAuth() {
+  const m = ui.auth;
+  const titles = { signin: 'Sign in', signup: 'Create your account', forgot: 'Reset your password', reset: 'Choose a new password' };
+  const showEmail = m !== 'reset';
+  const showPw = m !== 'forgot';
+  const pwLabel = m === 'reset' ? 'New password' : 'Password';
+  const submit = { signin: 'Sign in', signup: 'Create account', forgot: 'Send reset link', reset: 'Save password' }[m];
+  const links =
+    m === 'signin'
+      ? `<button type="button" class="link" data-action="auth-mode" data-mode="forgot">Forgot password?</button>
+         <button type="button" class="link" data-action="auth-mode" data-mode="signup">Create an account</button>`
+      : m === 'reset'
+        ? ''
+        : `<button type="button" class="link" data-action="auth-mode" data-mode="signin">Back to sign in</button>`;
+  return `<div class="auth">
+    <div class="auth-brand">Pocket Ledger</div>
+    <p class="hint">${m === 'signup' ? 'Your data is saved to your account, so it is the same on every device.' : 'Sign in to see your money on any device.'}</p>
+    <form class="card" id="authform" novalidate>
+      <h1 style="font-size:1.25rem">${titles[m]}</h1>
+      ${ui.notice ? `<div class="notice" role="status">${esc(ui.notice)}</div>` : ''}
+      ${showEmail ? `<div class="field"><label for="a-email">Email</label>
+        <input type="email" id="a-email" name="email" autocomplete="email" inputmode="email" autocapitalize="none" required></div>` : ''}
+      ${showPw ? `<div class="field"><label for="a-pw">${pwLabel}${m === 'signin' ? '' : ' (at least 8 characters)'}</label>
+        <input type="password" id="a-pw" name="password" autocomplete="${m === 'signin' ? 'current-password' : 'new-password'}" required></div>` : ''}
+      ${m === 'signup' || m === 'reset' ? `<div class="field"><label for="a-pw2">Confirm password</label>
+        <input type="password" id="a-pw2" name="password2" autocomplete="new-password" required></div>` : ''}
+      <div class="error" role="alert"></div>
+      <button class="btn primary wide" ${ui.busy ? 'disabled' : ''}>${ui.busy ? 'Please wait…' : submit}</button>
+      <div class="auth-links">${links}</div>
+    </form>
+  </div>`;
 }
 
 function render() {
+  const authScreen = cloudEnabled && (ui.auth === 'reset' || !getSession());
+  document.body.classList.toggle('auth-mode', authScreen);
+  if (authScreen) {
+    $('#nav').innerHTML = '';
+    $('#main').innerHTML = viewAuth();
+    return;
+  }
   renderNav();
   const views = { home: viewHome, transactions: viewTransactions, categories: viewCategories, settings: viewSettings };
   $('#main').innerHTML = views[ui.tab]();
@@ -417,21 +554,106 @@ document.addEventListener('click', async (e) => {
         render();
       }
       break;
-    case 'sync':
-      try {
-        setState(await syncNow(state));
-        toast('Synced');
-      } catch {
-        toast('Sync failed. Check your connection.');
+    case 'sync': {
+      const ok = await runSync();
+      toast(ok ? 'Synced' : syncInfo.error === 'offline' ? 'You are offline' : syncInfo.error || 'Sync failed');
+      break;
+    }
+    case 'reset':
+      if (confirm(`Delete ALL transactions${getSession() ? ' on every device' : ''}? Your categories are kept. Export a backup first if you might need it.`)) {
+        setState({ ...state, transactions: state.transactions.map((t) => (t.deleted ? t : { ...t, deleted: true, updatedAt: Date.now() })) });
+        toast('All transactions deleted');
       }
       break;
-    case 'reset':
-      if (confirm('Delete ALL data on this device? Export a backup first if you might need it.')) {
-        setState(createState());
-        toast('All data deleted');
-      }
+    case 'signout': {
+      // push the latest changes first, because signing out clears this device's copy
+      const ok = await runSync();
+      if (!ok && !confirm('Your latest changes could not be saved to your account (you may be offline). Sign out anyway and lose them?')) break;
+      await signOut();
+      setOwner(null);
+      state = createState();
+      save();
+      Object.assign(ui, { tab: 'home', auth: 'signin', notice: '', q: '' });
+      syncInfo.lastAt = 0;
+      syncInfo.error = '';
+      render();
+      break;
+    }
+    case 'auth-mode':
+      ui.auth = el.dataset.mode;
+      ui.notice = '';
+      render();
       break;
   }
+});
+
+// Called after any successful sign in / sign up with a session.
+async function afterSignIn(session) {
+  const owner = getOwner();
+  if (owner && owner !== session.user.id) state = createState(); // never mix another account's data in
+  setOwner(session.user.id);
+  save();
+  Object.assign(ui, { auth: 'signin', notice: '', tab: 'home' });
+  render();
+  await runSync();
+}
+
+const authErrorText = (e) =>
+  e instanceof NetworkError ? 'Cannot reach the server. Check your internet connection and try again.' : e.message || 'Something went wrong.';
+
+document.addEventListener('submit', async (e) => {
+  if (e.target.id !== 'authform') return;
+  e.preventDefault();
+  if (ui.busy) return;
+  const form = e.target;
+  const fd = new FormData(form);
+  const email = String(fd.get('email') || '').trim();
+  const pw = String(fd.get('password') || '');
+  const pw2 = String(fd.get('password2') || '');
+  const mode = ui.auth;
+  const fail = (msg) => {
+    form.querySelector('.error').textContent = msg;
+  };
+
+  if (mode !== 'reset' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return fail('Enter a valid email address.');
+  if (mode !== 'forgot' && !pw) return fail('Enter your password.');
+  if ((mode === 'signup' || mode === 'reset') && pw.length < 8) return fail('Use a password with at least 8 characters.');
+  if ((mode === 'signup' || mode === 'reset') && pw !== pw2) return fail('The two passwords do not match.');
+
+  ui.busy = true;
+  const btn = form.querySelector('button.primary');
+  btn.disabled = true;
+  btn.textContent = 'Please wait…';
+  try {
+    if (mode === 'signin') {
+      await afterSignIn(await signIn(email, pw));
+    } else if (mode === 'signup') {
+      const r = await signUp(email, pw);
+      if (r.session) await afterSignIn(r.session);
+      else {
+        Object.assign(ui, { busy: false, auth: 'signin', notice: 'Account created. Check your email for a confirmation link, then sign in here.' });
+        render();
+      }
+    } else if (mode === 'forgot') {
+      await sendPasswordReset(email);
+      Object.assign(ui, { busy: false, auth: 'signin', notice: 'If that email has an account, a reset link is on its way.' });
+      render();
+    } else if (mode === 'reset') {
+      await setPassword(pw);
+      toast('Password updated');
+      await afterSignIn(getSession());
+    }
+  } catch (err) {
+    ui.busy = false;
+    render();
+    const f = $('#authform');
+    if (f) {
+      f.querySelector('.error').textContent = authErrorText(err);
+      if (email && f.elements.email) f.elements.email.value = email;
+    }
+    return;
+  }
+  ui.busy = false;
 });
 
 document.addEventListener('input', (e) => {
@@ -445,7 +667,7 @@ document.addEventListener('change', (e) => {
   if (e.target.id === 'cur') {
     const v = e.target.value.trim().toUpperCase();
     if (/^[A-Z]{3}$/.test(v)) {
-      setState({ ...state, settings: { ...state.settings, currency: v } });
+      setState({ ...state, settings: { ...state.settings, currency: v, updatedAt: Date.now() } });
       toast('Currency updated');
     } else {
       toast('Use a 3-letter currency code, like EGP or USD');
@@ -483,8 +705,43 @@ window.addEventListener('beforeinstallprompt', (e) => {
 
 // ---------- start ----------
 
+// Links from Supabase emails (confirm sign-up / reset password) bring tokens in the URL hash.
+async function handleEmailLink() {
+  if (!cloudEnabled || !/access_token|error_description/.test(location.hash)) return;
+  const hash = location.hash;
+  history.replaceState(null, '', location.pathname + location.search);
+  try {
+    const r = await sessionFromHash(hash);
+    if (!r) return;
+    if (r.error) {
+      ui.notice = r.error;
+      render();
+    } else if (r.type === 'recovery') {
+      ui.auth = 'reset';
+      render();
+    } else {
+      await afterSignIn(r.session);
+    }
+  } catch (err) {
+    ui.notice = authErrorText(err);
+    render();
+  }
+}
+
 render();
-if (syncEnabled) syncNow(state).then(setState).catch(() => {});
+if (cloudEnabled) {
+  handleEmailLink().then(() => {
+    if (getSession() && ui.auth !== 'reset') {
+      if (!getOwner()) setOwner(getSession().user.id);
+      runSync();
+    }
+  });
+  window.addEventListener('online', () => runSync());
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') runSync();
+  });
+  setInterval(() => document.visibilityState === 'visible' && runSync(), 60_000);
+}
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
 }
