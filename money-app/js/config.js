@@ -6,10 +6,5 @@
 //                      NEVER put the "service_role" / "secret" key here.
 //
 // While these are empty the app runs in local-only mode (no accounts, no sync).
-export const SUPABASE_URL = '';
-export const SUPABASE_ANON_KEY = '';
-
-// Supabase only knows email logins, so the app turns a username like "alice" into a private
-// address "alice@<domain>" behind the scenes. No email is ever sent, which is why "Confirm email"
-// must be switched OFF in Supabase (see README). The domain only needs to look like a normal domain.
-export const USERNAME_EMAIL_DOMAIN = 'pocketledger.app';
+export const SUPABASE_URL = 'https://oxycbmruzxrypbqptcrv.supabase.co';
+export const SUPABASE_ANON_KEY = 'sb_publishable_mVCLPbqI2vSqvPaVuPWRXg_nhzVYXP_';
