@@ -11,7 +11,9 @@ on any device that opens the site. No build step: plain HTML, CSS and JavaScript
 - CSV export/import and JSON backup/restore
 - Accounts with just a username and password (no email): sign up, sign in, sign out, change password
 - Same data on every device (Supabase database, each user sees only their own rows)
-- Works offline, light and dark mode
+- **Insights tab**: income vs expenses by month, running balance, and spending by category, over the last 3, 6 or 12 months (hover or tap a chart for exact values; every chart has a "View as table" twin)
+- **All world currencies**: pick any of 160+ ISO currencies in Settings (one currency per account)
+- Modern dark "neon glass" theme, works offline
 
 ## Run locally
 ```
@@ -37,7 +39,7 @@ npm test         # unit tests for the data logic
 2. On vercel.com: **Add New → Project**, import the repo. Framework preset: **Other**. Leave build command and output directory empty.
 3. Deploy and open the URL.
 
-After every deploy that changes files, bump `CACHE` in `sw.js` (e.g. `pocket-ledger-v3`) so browsers pick up the update.
+After every deploy that changes files, bump `CACHE` in `sw.js` (e.g. `pocket-ledger-v5`) so browsers pick up the update.
 
 ## How sync works
 - The app always reads and writes local data first, so it is fast and works offline.
@@ -51,7 +53,9 @@ After every deploy that changes files, bump `CACHE` in `sw.js` (e.g. `pocket-led
 |---|---|
 | `index.html`, `styles.css` | Page shell and styling |
 | `js/app.js` | UI: views, dialogs, events, local persistence |
-| `js/store.js` | Pure data logic: money, merging, summaries, CSV (tested) |
+| `js/store.js` | Pure data logic: money, merging, summaries, analytics, CSV (tested) |
+| `js/charts.js` | Dependency-free SVG charts (columns, line, ranked bars) and tooltips |
+| `js/currencies.js` | List of all ISO 4217 currencies |
 | `js/sync.js` | Accounts (Supabase Auth) and database sync (REST), no extra libraries |
 | `js/config.js` | Your Supabase URL and anon key |
 | `supabase/schema.sql` | Tables and row-level security rules |
@@ -69,4 +73,5 @@ Money is stored as integer minor units (cents/piasters). This makes cloud sync s
 - Local-only mode: if `js/config.js` is left empty the app works without accounts, storing data in this browser only.
 - Clearing site data in a browser removes the local copy; signed-in users get it back from the database on next sign in.
 - Deleting an account is not built in (do it from the Supabase dashboard, Authentication → Users; their rows are removed automatically; users appear there as `name@pocketledger.app`).
-- One currency per account; no multi-account or multi-currency features yet.
+- One currency per account (switching it relabels existing amounts, it does not convert them). Amounts are always shown with two decimals, even for currencies such as JPY that normally have none.
+- Charts cover the most recent 3, 6 or 12 months up to the current month.

@@ -149,3 +149,81 @@ test('settings merge: newest change wins, missing remote settings keep local', (
   assert.equal(mergeState(local, { categories: [], transactions: [], settings: { currency: 'USD', updatedAt: 2 } }).settings.currency, 'EGP');
   assert.equal(mergeState(local, { categories: [], transactions: [] }).settings.currency, 'EGP');
 });
+
+import { monthsEnding, monthlySeries, balanceBefore, categoryTotals, formatMoney } from '../js/store.js';
+import { getCurrencies, CURRENCY_CODES } from '../js/currencies.js';
+import { niceTicks, axisFormatter } from '../js/charts.js';
+
+function analyticsState() {
+  const s = createState();
+  const food = s.categories.find((c) => c.name === 'Food').id;
+  const bills = s.categories.find((c) => c.name === 'Bills').id;
+  const salary = s.categories.find((c) => c.name === 'Salary').id;
+  let tx = [];
+  const add = (id, type, amount, categoryId, date) => (tx = upsert(tx, { id, type, amount, categoryId, date, note: '' }));
+  add('a1', 'income', 100000, salary, '2026-09-01');
+  add('a2', 'expense', 30000, food, '2026-09-10');
+  add('a3', 'income', 100000, salary, '2026-10-01');
+  add('a4', 'expense', 50000, bills, '2026-10-05');
+  add('a5', 'expense', 20000, food, '2026-10-20');
+  add('a6', 'expense', 10000, food, '2026-11-02');
+  add('a7', 'expense', 99999, food, '2026-07-02'); // before the range
+  return { ...s, transactions: tx };
+}
+
+test('monthsEnding lists months oldest first across a year boundary', () => {
+  assert.deepEqual(monthsEnding('2026-02', 4), ['2025-11', '2025-12', '2026-01', '2026-02']);
+});
+
+test('monthlySeries totals per month and ignores months outside the range', () => {
+  const rows = monthlySeries(analyticsState(), monthsEnding('2026-11', 3));
+  assert.deepEqual(rows.map((r) => [r.month, r.income, r.expense, r.net]), [
+    ['2026-09', 100000, 30000, 70000],
+    ['2026-10', 100000, 70000, 30000],
+    ['2026-11', 0, 10000, -10000],
+  ]);
+});
+
+test('running balance starts from everything before the range', () => {
+  const s = analyticsState();
+  assert.equal(balanceBefore(s, '2026-09'), -99999);
+  assert.equal(balanceBefore(s, '2026-10'), -99999 + 70000);
+});
+
+test('categoryTotals ranks expense categories and skips deleted transactions', () => {
+  const s = analyticsState();
+  const months = monthsEnding('2026-11', 3);
+  const totals = categoryTotals(s, months, 'expense');
+  assert.deepEqual(totals.map((t) => [t.name, t.total]), [['Food', 60000], ['Bills', 50000]]);
+  const s2 = { ...s, transactions: remove(s.transactions, 'a4') };
+  assert.equal(categoryTotals(s2, months, 'expense').find((t) => t.name === 'Bills'), undefined);
+});
+
+test('currency list covers the world and every code is valid for Intl', () => {
+  assert.ok(CURRENCY_CODES.length >= 150);
+  assert.equal(new Set(CURRENCY_CODES).size, CURRENCY_CODES.length);
+  for (const code of ['USD', 'EUR', 'EGP', 'SAR', 'AED', 'KWD', 'JPY', 'GBP', 'INR', 'CNY', 'TRY', 'ZAR', 'BRL', 'RUB']) assert.ok(CURRENCY_CODES.includes(code), code);
+  for (const code of CURRENCY_CODES) {
+    assert.doesNotThrow(() => new Intl.NumberFormat('en', { style: 'currency', currency: code }), code);
+  }
+  assert.equal(getCurrencies('en').find((c) => c.code === 'EGP').name, 'Egyptian Pound');
+});
+
+test('formatMoney always shows two decimals, even for zero-decimal currencies', () => {
+  assert.equal(formatMoney(1250, 'USD', 'en'), '$12.50');
+  assert.match(formatMoney(1250, 'JPY', 'en'), /12\.50/);
+  assert.match(formatMoney(123456, 'EGP', 'en'), /1,234\.56/);
+});
+
+test('niceTicks gives round numbers that cover the data', () => {
+  const t = niceTicks(0, 17.2, 4);
+  assert.deepEqual(t.ticks, [0, 5, 10, 15, 20]);
+  const n = niceTicks(-3200, 45180, 4);
+  assert.ok(n.lo <= -3200 && n.hi >= 45180 && n.ticks.includes(0));
+  assert.deepEqual(niceTicks(0, 0, 4).ticks.length > 1, true);
+});
+
+test('axisFormatter: full numbers under 10,000, compact above', () => {
+  assert.equal(axisFormatter(5000)(2500), '2,500');
+  assert.equal(axisFormatter(20000)(15000), '15K');
+});

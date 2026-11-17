@@ -1,7 +1,9 @@
 import {
   SCHEMA_VERSION, uid, todayStr, monthKey, shiftMonth, toMinor, fromMinor, formatMoney, createState, live, upsert, remove,
-  mergeState, sanitizeState, summarize, toCSV, importCSV, isValidDate,
+  mergeState, sanitizeState, summarize, toCSV, importCSV, isValidDate, monthsEnding, monthlySeries, balanceBefore, categoryTotals,
 } from './store.js';
+import { getCurrencies } from './currencies.js';
+import { columnChart, lineChart, rankedBars, attachTips, hideTip } from './charts.js';
 import {
   cloudEnabled, AuthError, NetworkError, getSession, getOwner, setOwner, signUp, signIn, signOut, setPassword, syncNow,
   USERNAME_RE, normalizeUsername, displayName,
@@ -33,7 +35,7 @@ function load() {
 
 let state = load();
 // auth: 'signin' | 'signup'
-const ui = { tab: 'home', month: monthKey(todayStr()), q: '', auth: 'signin', notice: '', busy: false };
+const ui = { tab: 'home', month: monthKey(todayStr()), q: '', range: 6, auth: 'signin', notice: '', busy: false };
 let deferredInstall = null;
 const syncInfo = { lastAt: 0, error: '' };
 
@@ -158,20 +160,34 @@ function download(name, text, type) {
 
 // ---------- views ----------
 
+const svg = (inner) =>
+  `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;
+
+const ICONS = {
+  home: svg('<path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/>'),
+  transactions: svg('<path d="M8 6h13M8 12h13M8 18h13"/><circle cx="3.5" cy="6" r="1"/><circle cx="3.5" cy="12" r="1"/><circle cx="3.5" cy="18" r="1"/>'),
+  insights: svg('<path d="M5 20v-7M11 20V5M17 20v-10M3 20h18"/>'),
+  categories: svg('<path d="M12 3v9h9"/><path d="M20.5 15A9 9 0 1 1 9 3.5"/>'),
+  settings: svg('<path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/>'),
+};
+
+const LOGO = svg('<rect x="3" y="6" width="18" height="13" rx="3"/><path d="M3 10h18"/><circle cx="16.5" cy="14.5" r="1.3"/>');
+
 const TABS = [
-  ['home', '⌂', 'Home'],
-  ['transactions', '☰', 'Activity'],
-  ['categories', '%', 'Budgets'],
-  ['settings', '⚙', 'Settings'],
+  ['home', 'Home'],
+  ['transactions', 'Activity'],
+  ['insights', 'Insights'],
+  ['categories', 'Budgets'],
+  ['settings', 'Settings'],
 ];
 
 function renderNav() {
   $('#nav').innerHTML =
-    '<div class="brand">Pocket Ledger</div>' +
+    `<div class="brand"><span class="logo">${LOGO}</span><span>Pocket Ledger</span></div>` +
     TABS.map(
-      ([id, ico, label]) =>
+      ([id, label]) =>
         `<button data-action="tab" data-tab="${id}" ${ui.tab === id ? 'aria-current="page"' : ''}>` +
-        `<span class="ico" aria-hidden="true">${ico}</span><span>${label}</span></button>`,
+        `<span class="ico">${ICONS[id]}</span><span class="lbl">${label}</span></button>`,
     ).join('');
 }
 
@@ -297,14 +313,140 @@ function accountCard() {
   </div>`;
 }
 
+function currencyOptions() {
+  const cur = state.settings.currency;
+  const list = getCurrencies();
+  if (!list.some((c) => c.code === cur)) list.unshift({ code: cur, name: cur });
+  return list
+    .map((c) => `<option value="${esc(c.code)}" ${c.code === cur ? 'selected' : ''}>${esc(c.code)} · ${esc(c.name)}</option>`)
+    .join('');
+}
+
+// ---------- insights (charts) ----------
+
+const shortMonth = (key) => {
+  const [y, m] = key.split('-').map(Number);
+  return new Date(y, m - 1, 1).toLocaleDateString(undefined, { month: 'short' });
+};
+
+function insightsData() {
+  const months = monthsEnding(monthKey(todayStr()), ui.range);
+  const rows = monthlySeries(state, months);
+  const income = rows.reduce((t, r) => t + r.income, 0);
+  const expense = rows.reduce((t, r) => t + r.expense, 0);
+  let run = balanceBefore(state, months[0]);
+  const balance = rows.map((r) => (run += r.net));
+  const all = categoryTotals(state, months, 'expense');
+  let top = all.slice(0, 8);
+  if (all.length > 8) {
+    top = [...all.slice(0, 7), { id: 'other', name: 'Other categories', total: all.slice(7).reduce((t, c) => t + c.total, 0), other: true }];
+  }
+  return {
+    months, rows, income, expense, net: income - expense, balance,
+    rate: income > 0 ? (income - expense) / income : null,
+    cats: top.map((c) => ({ ...c, share: expense ? c.total / expense : 0 })),
+    hasData: income > 0 || expense > 0,
+  };
+}
+
+// Stat tiles are narrow: abbreviate very large amounts (EGP 1.2M) so they never wrap mid-number.
+function moneyTile(n) {
+  if (Math.abs(n) < 100_000_000) return money(n);
+  try {
+    return new Intl.NumberFormat(undefined, { style: 'currency', currency: state.settings.currency, notation: 'compact', maximumFractionDigits: 2 }).format(n / 100);
+  } catch {
+    return money(n);
+  }
+}
+
+function tableView(head, rows) {
+  return `<details class="tableview"><summary>View as table</summary><div class="tv-scroll"><table>
+    <thead><tr>${head.map((h) => `<th scope="col">${esc(h)}</th>`).join('')}</tr></thead>
+    <tbody>${rows.map((r) => `<tr>${r.map((c, i) => (i ? `<td class="num">${esc(c)}</td>` : `<th scope="row">${esc(c)}</th>`)).join('')}</tr>`).join('')}</tbody>
+  </table></div></details>`;
+}
+
+function viewInsights() {
+  const d = insightsData();
+  const filter = `<div class="filters" role="group" aria-label="Period">${[3, 6, 12]
+    .map((n) => `<button class="${ui.range === n ? 'on' : ''}" data-action="range" data-n="${n}" aria-pressed="${ui.range === n}">${n} months</button>`)
+    .join('')}</div>`;
+  if (!d.hasData) {
+    return `<h1>Insights</h1>${filter}<div class="card empty">No income or expenses in the last ${ui.range} months yet. Add a few transactions and your charts will appear here.</div>`;
+  }
+  const pct = d.rate === null ? '–' : `${Math.round(d.rate * 100)}%`;
+  const tile = (label, value, sub, cls = '') =>
+    `<div class="card tile"><div class="label">${label}</div><div class="value ${cls}">${esc(value)}</div><div class="sub">${esc(sub)}</div></div>`;
+  const per = `Last ${ui.range} months`;
+  return `<h1>Insights</h1>${filter}
+    <div class="tiles">
+      ${tile('Income', moneyTile(d.income), per, 'income')}
+      ${tile('Expenses', moneyTile(d.expense), `About ${money(Math.round(d.expense / ui.range))} a month`, 'expense')}
+      ${tile('Net', moneyTile(d.net), d.net >= 0 ? 'You saved this much' : 'You spent more than you earned', d.net < 0 ? 'expense' : '')}
+      ${tile('Savings rate', pct, d.rate === null ? 'No income yet' : 'Share of income kept')}
+    </div>
+    <section class="card chart-card">
+      <h2>Income vs expenses</h2>
+      <div class="legend"><span class="lg"><i class="s1"></i>Income</span><span class="lg"><i class="s2"></i>Expenses</span></div>
+      <div class="chart" id="ch-monthly"></div>
+      ${tableView(['Month', 'Income', 'Expenses', 'Net'], d.months.map((k, i) => [monthLabel(k), money(d.rows[i].income), money(d.rows[i].expense), money(d.rows[i].net)]))}
+    </section>
+    <section class="card chart-card">
+      <h2>Running balance</h2>
+      <p class="hint" style="margin:-4px 0 6px">Everything you have earned minus everything you have spent, at the end of each month.</p>
+      <div class="chart" id="ch-balance"></div>
+      ${tableView(['Month', 'Balance'], d.months.map((k, i) => [monthLabel(k), money(d.balance[i])]))}
+    </section>
+    <section class="card chart-card">
+      <h2>Where the money goes</h2>
+      ${d.cats.length ? '<div class="chart" id="ch-cats"></div>' : '<div class="empty">No spending in this period.</div>'}
+      ${d.cats.length ? tableView(['Category', 'Spent', 'Share'], d.cats.map((c) => [c.name, money(c.total), `${Math.round(c.share * 100)}%`])) : ''}
+    </section>`;
+}
+
+function drawInsights() {
+  if (ui.tab !== 'insights') return;
+  const d = insightsData();
+  if (!d.hasData) return;
+  const tipEl = $('#tip');
+  hideTip();
+  const labels = d.months.map((key) => ({ label: shortMonth(key), title: monthLabel(key) }));
+  const mount = (id, make) => {
+    const el = $(id);
+    if (!el || !el.clientWidth) return;
+    const { html, tips } = make(el.clientWidth);
+    el.innerHTML = html;
+    attachTips(el, tips, tipEl);
+  };
+  mount('#ch-monthly', (width) =>
+    columnChart({
+      width,
+      months: labels.map((l, i) => ({ ...l, values: [d.rows[i].income, d.rows[i].expense] })),
+      series: [{ name: 'Income', cls: 's1' }, { name: 'Expenses', cls: 's2' }],
+      fmtMoney: money,
+      ariaLabel: 'Income and expenses by month',
+    }),
+  );
+  mount('#ch-balance', (width) =>
+    lineChart({
+      width,
+      months: labels.map((l, i) => ({ ...l, value: d.balance[i] })),
+      name: 'Balance',
+      fmtMoney: money,
+      ariaLabel: 'Running balance by month',
+    }),
+  );
+  mount('#ch-cats', () => rankedBars({ rows: d.cats, fmtMoney: money }));
+}
+
 function viewSettings() {
   return `<h1>Settings</h1>
     <h2>Account</h2>${accountCard()}
     <h2>Preferences</h2>
     <div class="card">
-      <div class="field"><label for="cur">Currency code (e.g. EGP, USD, EUR, SAR)</label>
-        <input type="text" id="cur" maxlength="3" value="${esc(state.settings.currency)}" list="curs" autocapitalize="characters" autocomplete="off">
-        <datalist id="curs">${['EGP', 'USD', 'EUR', 'GBP', 'SAR', 'AED', 'KWD', 'QAR', 'JPY', 'CAD', 'AUD'].map((c) => `<option value="${c}">`).join('')}</datalist>
+      <div class="field"><label for="cur">Currency</label>
+        <select id="cur">${currencyOptions()}</select>
+        <span class="hint">Used for every amount. Pick any world currency; amounts are always shown with two decimals.</span>
       </div>
     </div>
     <h2>Your data</h2>
@@ -327,7 +469,7 @@ function viewSettings() {
 function viewAuth() {
   const up = ui.auth === 'signup';
   return `<div class="auth">
-    <div class="auth-brand">Pocket Ledger</div>
+    <div class="auth-brand"><span class="logo">${LOGO}</span><span>Pocket Ledger</span></div>
     <p class="hint">${up ? 'Pick a username and password. Your data is saved to your account, so it is the same on every device.' : 'Sign in to see your money on any device.'}</p>
     <form class="card" id="authform" novalidate>
       <h1 style="font-size:1.25rem">${up ? 'Create your account' : 'Sign in'}</h1>
@@ -357,8 +499,9 @@ function render() {
     return;
   }
   renderNav();
-  const views = { home: viewHome, transactions: viewTransactions, categories: viewCategories, settings: viewSettings };
+  const views = { home: viewHome, transactions: viewTransactions, insights: viewInsights, categories: viewCategories, settings: viewSettings };
   $('#main').innerHTML = views[ui.tab]();
+  drawInsights();
 }
 
 // ---------- dialogs ----------
@@ -571,6 +714,10 @@ document.addEventListener('click', async (e) => {
       render();
       break;
     }
+    case 'range':
+      ui.range = Number(el.dataset.n) || 6;
+      render();
+      break;
     case 'change-password':
       openPasswordDialog();
       break;
@@ -684,6 +831,16 @@ document.addEventListener('change', (e) => {
 });
 
 $('#fab').addEventListener('click', () => openTxDialog());
+
+let resizeFrame;
+window.addEventListener('resize', () => {
+  cancelAnimationFrame(resizeFrame);
+  resizeFrame = requestAnimationFrame(drawInsights);
+});
+document.addEventListener('pointerdown', (e) => {
+  if (!e.target.closest('[data-i]')) hideTip();
+});
+window.addEventListener('scroll', hideTip, { passive: true });
 
 $('#file').addEventListener('change', async (e) => {
   const file = e.target.files[0];

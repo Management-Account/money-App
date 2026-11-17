@@ -72,9 +72,15 @@ export function fromMinor(minor) {
   return `${sign}${Math.floor(abs / 100)}.${String(abs % 100).padStart(2, '0')}`;
 }
 
+// Always two decimals, whatever the currency, because amounts are stored in hundredths.
 export function formatMoney(minor, currency = 'EGP', locale) {
   try {
-    return new Intl.NumberFormat(locale, { style: 'currency', currency }).format(minor / 100);
+    return new Intl.NumberFormat(locale, {
+      style: 'currency',
+      currency,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(minor / 100);
   } catch {
     return `${currency} ${fromMinor(minor)}`;
   }
@@ -222,6 +228,50 @@ export function summarize(state, month) {
   }
   const byCategory = [...rows.values()].sort((a, b) => b.spent - a.spent);
   return { income, expense, net: income - expense, count: txs.length, byCategory };
+}
+
+// ---------- analytics ----------
+
+// ['2026-06', ..., '2026-11'] : `count` months ending at endKey, oldest first.
+export function monthsEnding(endKey, count) {
+  const out = [];
+  for (let i = count - 1; i >= 0; i--) out.push(shiftMonth(endKey, -i));
+  return out;
+}
+
+export function monthlySeries(state, months) {
+  const idx = new Map(months.map((m, i) => [m, i]));
+  const rows = months.map((month) => ({ month, income: 0, expense: 0, net: 0 }));
+  for (const t of live(state.transactions)) {
+    const i = idx.get(monthKey(t.date));
+    if (i === undefined) continue;
+    if (t.type === 'income') rows[i].income += t.amount;
+    else rows[i].expense += t.amount;
+  }
+  for (const r of rows) r.net = r.income - r.expense;
+  return rows;
+}
+
+// Net of everything dated before `firstMonth` (the starting point of a running balance).
+export function balanceBefore(state, firstMonth) {
+  let sum = 0;
+  for (const t of live(state.transactions)) {
+    if (monthKey(t.date) < firstMonth) sum += t.type === 'income' ? t.amount : -t.amount;
+  }
+  return sum;
+}
+
+export function categoryTotals(state, months, type = 'expense') {
+  const inRange = new Set(months);
+  const names = new Map(state.categories.map((c) => [c.id, c.name]));
+  const totals = new Map();
+  for (const t of live(state.transactions)) {
+    if (t.type !== type || !inRange.has(monthKey(t.date))) continue;
+    totals.set(t.categoryId, (totals.get(t.categoryId) || 0) + t.amount);
+  }
+  return [...totals]
+    .map(([id, total]) => ({ id, name: names.get(id) || 'Uncategorized', total }))
+    .sort((a, b) => b.total - a.total);
 }
 
 // ---------- CSV ----------
