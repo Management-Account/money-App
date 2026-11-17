@@ -4,7 +4,10 @@ A simple money manager web app with username + password accounts (sign up / sign
 on any device that opens the site. No build step: plain HTML, CSS and JavaScript modules. Works offline and syncs when back online.
 
 ## Features
-- Income and expense transactions with categories, notes and dates
+- Income and expense transactions with categories, notes, dates and a wallet
+- **Wallets**: any number of accounts (Cash, Bank, Savings, a credit card...), each with its own balance (starting balance + income - expenses)
+- **Overview**: total across all wallets, then each wallet, this month's numbers, and only the 10 latest transactions
+- **Transactions tab**: every transaction of all time, grouped by day, with search and wallet / income / expense filters
 - Monthly overview: income, expenses, balance, spending by category
 - Monthly budgets per expense category (turns amber near the limit, red when over)
 - Search, edit and delete transactions
@@ -26,6 +29,8 @@ npm test         # unit tests for the data logic
 1. Create a project at supabase.com.
 2. **SQL Editor → New query**: paste the contents of `supabase/schema.sql` and **Run**. This creates the tables and the
    row-level security rules (each user can only read/write their own rows).
+   **Updating from an earlier version? Run the new `schema.sql` again before using the new app.** It is safe to re-run: it adds
+   the wallets table and the wallet column and keeps all your data. Until you do, sync shows a "Sync problem" message (your data stays safe on the device).
 3. **Project Settings → API**: copy the **Project URL** and the **anon / publishable** key into `js/config.js`.
    (The anon key is meant to be public. Never use the `service_role` / secret key in this app.)
 4. **Authentication → Providers → Email**: turn **Confirm email OFF** (and leave the Email provider enabled).
@@ -63,7 +68,7 @@ After every deploy that changes files, bump `CACHE` in `sw.js` (e.g. `pocket-led
 | `test/store.test.js` | Unit tests |
 
 ## Data model
-Every record has a UUID `id`, an `updatedAt` timestamp and an optional `deleted` flag (soft delete).
+Wallets (`accounts`), categories and transactions all follow the same rule. Every record has a UUID `id`, an `updatedAt` timestamp and an optional `deleted` flag (soft delete).
 Money is stored as integer minor units (cents/piasters). This makes cloud sync safe: `mergeState()` in
 `store.js` already merges two devices' data with last-write-wins per record.
 
@@ -74,4 +79,7 @@ Money is stored as integer minor units (cents/piasters). This makes cloud sync s
 - Clearing site data in a browser removes the local copy; signed-in users get it back from the database on next sign in.
 - Deleting an account is not built in (do it from the Supabase dashboard, Authentication → Users; their rows are removed automatically; users appear there as `name@pocketledger.app`).
 - One currency per account (switching it relabels existing amounts, it does not convert them). Amounts are always shown with two decimals, even for currencies such as JPY that normally have none.
-- Charts cover the most recent 3, 6 or 12 months up to the current month.
+- Charts cover the most recent 3, 6 or 12 months up to the current month and are not split by wallet.
+- There are no transfers between wallets yet (record the move as an expense in one wallet and income in the other).
+- Deleting a wallet also deletes the transactions recorded in it (the app asks first). You always keep at least one wallet.
+- Transactions saved before wallets existed count toward the default "Cash" wallet.

@@ -78,7 +78,7 @@ test('soft delete hides a transaction from summaries', () => {
 test('CSV export then import into a fresh state restores data and skips duplicates', () => {
   const s = sampleState();
   const csv = toCSV(s);
-  assert.deepEqual(parseCSV(csv)[0], ['date', 'type', 'category', 'amount', 'note']);
+  assert.deepEqual(parseCSV(csv)[0], ['date', 'type', 'category', 'amount', 'note', 'account']);
   const fresh = createState();
   const r = importCSV(fresh, csv);
   assert.equal(r.added, 4);
@@ -226,4 +226,101 @@ test('niceTicks gives round numbers that cover the data', () => {
 test('axisFormatter: full numbers under 10,000, compact above', () => {
   assert.equal(axisFormatter(5000)(2500), '2,500');
   assert.equal(axisFormatter(20000)(15000), '15K');
+});
+
+import { DEFAULT_ACCOUNT_ID, toMinorSigned, accountSummaries, accountIdOf, removeAccount, liveAccounts } from '../js/store.js';
+
+const W2 = '33333333-3333-4333-8333-333333333333';
+
+function walletState() {
+  let s = createState();
+  s = { ...s, accounts: upsert(s.accounts, { id: W2, name: 'Bank', opening: 100000 }) };
+  const salary = s.categories.find((c) => c.name === 'Salary').id;
+  const food = s.categories.find((c) => c.name === 'Food').id;
+  let tx = [];
+  tx = upsert(tx, { id: 'w1', type: 'income', amount: 50000, categoryId: salary, accountId: W2, date: '2026-11-01', note: '' });
+  tx = upsert(tx, { id: 'w2', type: 'expense', amount: 12000, categoryId: food, accountId: W2, date: '2026-11-02', note: '' });
+  tx = upsert(tx, { id: 'w3', type: 'expense', amount: 3000, categoryId: food, accountId: DEFAULT_ACCOUNT_ID, date: '2026-11-03', note: '' });
+  tx = upsert(tx, { id: 'w4', type: 'income', amount: 7000, categoryId: salary, date: '2026-11-04', note: 'old, no wallet' });
+  return { ...s, transactions: tx };
+}
+
+test('new state has the same default wallet on every device and it never duplicates', () => {
+  const a = createState();
+  const b = createState();
+  assert.equal(a.accounts.length, 1);
+  assert.equal(a.accounts[0].id, DEFAULT_ACCOUNT_ID);
+  assert.equal(mergeState(a, b).accounts.length, 1);
+});
+
+test('each wallet has its own balance and the total is their sum', () => {
+  const { accounts, total } = accountSummaries(walletState());
+  const bank = accounts.find((a) => a.id === W2);
+  const cash = accounts.find((a) => a.id === DEFAULT_ACCOUNT_ID);
+  assert.equal(bank.balance, 100000 + 50000 - 12000);
+  assert.deepEqual([bank.income, bank.expense, bank.count], [50000, 12000, 2]);
+  assert.equal(cash.balance, 0 - 3000 + 7000); // includes the old transaction that has no wallet
+  assert.equal(cash.count, 2);
+  assert.equal(total, bank.balance + cash.balance);
+});
+
+test('a transaction pointing at a deleted or unknown wallet counts toward the default wallet', () => {
+  const s = walletState();
+  const gone = { ...s, accounts: remove(s.accounts, W2) };
+  assert.equal(accountIdOf(gone, gone.transactions.find((t) => t.id === 'w1')), DEFAULT_ACCOUNT_ID);
+  assert.equal(accountIdOf(s, { accountId: 'unknown' }), DEFAULT_ACCOUNT_ID);
+});
+
+test('removeAccount deletes the wallet and its transactions only', () => {
+  const s = walletState();
+  const next = removeAccount(s, W2);
+  assert.deepEqual(liveAccounts(next).map((a) => a.name), ['Cash']);
+  assert.deepEqual(live(next.transactions).map((t) => t.id).sort(), ['w3', 'w4']);
+  const { accounts, total } = accountSummaries(next);
+  assert.equal(accounts.length, 1);
+  assert.equal(total, 4000);
+});
+
+test('merging wallets across devices: newest edit wins, deletes propagate', () => {
+  const base = createState();
+  const a = { ...base, accounts: upsert(base.accounts, { id: W2, name: 'Bank', opening: 0 }) };
+  const b = { ...a, accounts: upsert(a.accounts, { id: W2, name: 'Savings', opening: 5000 }) };
+  b.accounts = b.accounts.map((x) => (x.id === W2 ? { ...x, updatedAt: x.updatedAt + 10 } : x));
+  assert.equal(mergeState(a, b).accounts.find((x) => x.id === W2).name, 'Savings');
+  const gone = { ...a, accounts: remove(a.accounts, DEFAULT_ACCOUNT_ID) };
+  assert.equal(liveAccounts(mergeState(createState(), gone)).some((x) => x.id === DEFAULT_ACCOUNT_ID), false);
+});
+
+test('toMinorSigned accepts a leading minus', () => {
+  assert.equal(toMinorSigned('-200'), -20000);
+  assert.equal(toMinorSigned('\u2212 12.5'.replace(' ', '')), -1250);
+  assert.equal(toMinorSigned('45'), 4500);
+  assert.equal(toMinorSigned('-0'), 0);
+  assert.ok(Number.isNaN(toMinorSigned('--5')));
+  assert.ok(Number.isNaN(toMinorSigned('abc')));
+});
+
+test('sanitizeState keeps wallets and each transaction wallet, and drops bad ones', () => {
+  const clean = sanitizeState({
+    accounts: [{ id: W2, name: ' Bank ', opening: 500, updatedAt: 4 }, { id: 'nope', name: 'x' }, { id: W2.replace('3', '4'), name: '  ' }],
+    transactions: [{ id: T1, type: 'expense', amount: 500, date: '2026-11-01', accountId: W2 }, { id: '22222222-2222-4222-8222-222222222299', type: 'expense', amount: 5, date: '2026-11-01', accountId: 'junk' }],
+  });
+  assert.deepEqual(clean.accounts.map((a) => [a.id, a.name, a.opening]), [[W2, 'Bank', 500]]);
+  assert.deepEqual(clean.transactions.map((t) => t.accountId), [W2, '']);
+  assert.deepEqual(sanitizeState({}).accounts, []);
+});
+
+test('CSV: wallets round-trip through export and import, new wallets are created, duplicates skipped', () => {
+  const s = walletState();
+  const csv = toCSV(s);
+  assert.ok(csv.split('\n')[0].endsWith(',account'));
+  assert.match(csv, /,Bank\n/);
+  const r = importCSV(createState(), csv);
+  assert.equal(r.added, 4);
+  assert.deepEqual(liveAccounts(r.state).map((a) => a.name), ['Bank', 'Cash']);
+  const sums = accountSummaries(r.state).accounts;
+  assert.equal(sums.find((a) => a.name === 'Bank').count, 2);
+  assert.equal(importCSV(r.state, csv).added, 0);
+  const plain = importCSV(createState(), 'date,type,amount\n2026-11-01,expense,5\n');
+  assert.equal(plain.state.transactions[0].accountId, DEFAULT_ACCOUNT_ID);
 });

@@ -63,7 +63,9 @@ async function http(path, { method = 'GET', body, token, headers = {} } = {}) {
   }
   if (!res.ok) {
     let msg = data?.msg || data?.error_description || data?.message || data?.error || `Request failed (${res.status})`;
-    if (data?.code === 'PGRST205' || data?.code === '42P01') msg += ' (Did you run supabase/schema.sql in your Supabase project?)';
+    if (['PGRST205', '42P01', 'PGRST204', '42703'].includes(data?.code)) {
+      msg += ' (Run the latest supabase/schema.sql in your Supabase SQL Editor. It is safe to run again on an existing project.)';
+    }
     const err = new Error(msg);
     err.status = res.status;
     throw err;
@@ -219,12 +221,16 @@ const fromCat = (r) => ({
 const toCat = (c) => ({
   id: c.id, name: c.name, type: c.type, budget: c.budget || 0, updated_at: c.updatedAt || 0, deleted: !!c.deleted,
 });
+const fromAcc = (r) => ({
+  id: r.id, name: r.name, opening: Number(r.opening) || 0, updatedAt: Number(r.updated_at) || 0, ...(r.deleted ? { deleted: true } : {}),
+});
+const toAcc = (a) => ({ id: a.id, name: a.name, opening: a.opening || 0, updated_at: a.updatedAt || 0, deleted: !!a.deleted });
 const fromTx = (r) => ({
-  id: r.id, type: r.type, amount: Number(r.amount), categoryId: r.category_id || '', date: r.date, note: r.note || '',
+  id: r.id, type: r.type, amount: Number(r.amount), categoryId: r.category_id || '', accountId: r.account_id || '', date: r.date, note: r.note || '',
   updatedAt: Number(r.updated_at) || 0, ...(r.deleted ? { deleted: true } : {}),
 });
 const toTx = (t) => ({
-  id: t.id, type: t.type, amount: t.amount, category_id: t.categoryId || '', date: t.date, note: t.note || '',
+  id: t.id, type: t.type, amount: t.amount, category_id: t.categoryId || '', account_id: t.accountId || '', date: t.date, note: t.note || '',
   updated_at: t.updatedAt || 0, deleted: !!t.deleted,
 });
 
@@ -241,9 +247,10 @@ async function push(table, rows) {
 // Pull the account's data, merge it with local data (newest edit per record wins), push back
 // whatever is newer locally, and return the merged state.
 export async function syncNow(state) {
-  const [rc, rt, rs] = await Promise.all([fetchAll('categories'), fetchAll('transactions'), rest('settings?select=*')]);
+  const [rc, ra, rt, rs] = await Promise.all([fetchAll('categories'), fetchAll('accounts'), fetchAll('transactions'), rest('settings?select=*')]);
   const remote = {
     categories: rc.map(fromCat),
+    accounts: ra.map(fromAcc),
     transactions: rt.map(fromTx),
     settings: rs[0] ? { currency: rs[0].currency, updatedAt: Number(rs[0].updated_at) || 0 } : undefined,
   };
@@ -254,6 +261,7 @@ export async function syncNow(state) {
     return list.filter((x) => !seen.has(x.id) || x.updatedAt > seen.get(x.id));
   };
   await push('categories', newer(merged.categories, remote.categories).map(toCat));
+  await push('accounts', newer(merged.accounts, remote.accounts).map(toAcc));
   await push('transactions', newer(merged.transactions, remote.transactions).map(toTx));
   if (merged.settings.updatedAt > (remote.settings?.updatedAt ?? 0)) {
     await push('settings', [{ currency: merged.settings.currency, updated_at: merged.settings.updatedAt }]);

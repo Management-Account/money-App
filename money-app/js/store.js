@@ -65,6 +65,14 @@ export function toMinor(input) {
   return Number.isSafeInteger(total) ? total : NaN;
 }
 
+// Like toMinor, but allows a leading minus (a wallet can start in debt): "-50" -> -5000.
+export function toMinorSigned(input) {
+  const s = normalizeDigits(input).trim().replace(/^[\u2212\u2013]/, '-');
+  if (!s.startsWith('-')) return toMinor(s);
+  const v = toMinor(s.slice(1));
+  return Number.isNaN(v) ? NaN : v === 0 ? 0 : -v;
+}
+
 // 123450 -> "1234.50" (for editing fields / CSV)
 export function fromMinor(minor) {
   const sign = minor < 0 ? '-' : '';
@@ -102,10 +110,15 @@ const DEFAULT_CATEGORIES = [
   ['b4a14e6c-d9b9-45b1-93be-5e5d717f7360', 'Other income', 'income'],
 ];
 
+// The default wallet has a FIXED id and updatedAt 0, like the default categories, so every device
+// creates the same record and syncing never duplicates it. Older transactions without a wallet count toward it.
+export const DEFAULT_ACCOUNT_ID = 'c0a7f3e2-5b1d-4f6a-9c84-2d3e7a1b6f90';
+
 export function createState() {
   return {
     version: SCHEMA_VERSION,
     settings: { currency: 'EGP', updatedAt: 0 },
+    accounts: [{ id: DEFAULT_ACCOUNT_ID, name: 'Cash', opening: 0, updatedAt: 0 }],
     categories: DEFAULT_CATEGORIES.map(([id, name, type]) => ({ id, name, type, budget: 0, updatedAt: 0 })),
     transactions: [],
   };
@@ -147,6 +160,7 @@ export function mergeState(local, remote) {
     ...local,
     settings,
     categories: mergeCollections(local.categories, remote.categories),
+    accounts: mergeCollections(local.accounts || [], remote.accounts || []),
     transactions: mergeCollections(local.transactions, remote.transactions),
   };
 }
@@ -156,6 +170,7 @@ export function sanitizeState(obj) {
   if (!obj || typeof obj !== 'object') throw new Error('Not a valid backup file');
   const cats = Array.isArray(obj.categories) ? obj.categories : [];
   const txs = Array.isArray(obj.transactions) ? obj.transactions : [];
+  const accs = Array.isArray(obj.accounts) ? obj.accounts : [];
   const categories = cats
     .filter(
       (c) =>
@@ -190,15 +205,25 @@ export function sanitizeState(obj) {
       type: t.type,
       amount: t.amount,
       categoryId: typeof t.categoryId === 'string' ? t.categoryId : '',
+      accountId: typeof t.accountId === 'string' && UUID_RE.test(t.accountId) ? t.accountId : '',
       date: t.date,
       note: typeof t.note === 'string' ? t.note.slice(0, 200) : '',
       updatedAt: Number.isFinite(t.updatedAt) ? t.updatedAt : 0,
       ...(t.deleted ? { deleted: true } : {}),
     }));
+  const accounts = accs
+    .filter((a) => a && typeof a.id === 'string' && UUID_RE.test(a.id) && typeof a.name === 'string' && a.name.trim().length > 0)
+    .map((a) => ({
+      id: a.id,
+      name: a.name.trim().slice(0, 60),
+      opening: Number.isSafeInteger(a.opening) ? a.opening : 0,
+      updatedAt: Number.isFinite(a.updatedAt) ? a.updatedAt : 0,
+      ...(a.deleted ? { deleted: true } : {}),
+    }));
   const cur = typeof obj.settings?.currency === 'string' ? obj.settings.currency.toUpperCase() : '';
   const currency = /^[A-Z]{3}$/.test(cur) ? cur : 'EGP';
   const updatedAt = Number.isFinite(obj.settings?.updatedAt) ? obj.settings.updatedAt : 0;
-  return { version: SCHEMA_VERSION, settings: { currency, updatedAt }, categories, transactions };
+  return { version: SCHEMA_VERSION, settings: { currency, updatedAt }, categories, accounts, transactions };
 }
 
 // ---------- summaries ----------
@@ -228,6 +253,52 @@ export function summarize(state, month) {
   }
   const byCategory = [...rows.values()].sort((a, b) => b.spent - a.spent);
   return { income, expense, net: income - expense, count: txs.length, byCategory };
+}
+
+// ---------- wallets (accounts) ----------
+
+export function liveAccounts(state) {
+  return live(state.accounts || [])
+    .slice()
+    .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+}
+
+// Where a transaction with no (or a deleted) wallet is counted: the default wallet, else the first one.
+export function fallbackAccountId(state) {
+  const accs = liveAccounts(state);
+  return accs.find((a) => a.id === DEFAULT_ACCOUNT_ID)?.id || accs[0]?.id || '';
+}
+
+export function accountIdOf(state, t) {
+  const a = (state.accounts || []).find((x) => x.id === t.accountId && !x.deleted);
+  return a ? a.id : fallbackAccountId(state);
+}
+
+// Balance of a wallet = starting balance + all its income - all its expenses (all time).
+export function accountSummaries(state) {
+  const accs = liveAccounts(state);
+  const rows = new Map(accs.map((a) => [a.id, { id: a.id, name: a.name, opening: a.opening || 0, income: 0, expense: 0, count: 0, balance: 0 }]));
+  for (const t of live(state.transactions)) {
+    const r = rows.get(accountIdOf(state, t));
+    if (!r) continue;
+    r.count++;
+    if (t.type === 'income') r.income += t.amount;
+    else r.expense += t.amount;
+  }
+  const accounts = [...rows.values()];
+  for (const r of accounts) r.balance = r.opening + r.income - r.expense;
+  return { accounts, total: accounts.reduce((sum, r) => sum + r.balance, 0) };
+}
+
+// Deleting a wallet also deletes the transactions counted in it, so totals stay truthful.
+export function removeAccount(state, id) {
+  const t = now();
+  const doomed = new Set(live(state.transactions).filter((x) => accountIdOf(state, x) === id).map((x) => x.id));
+  return {
+    ...state,
+    accounts: remove(state.accounts, id),
+    transactions: state.transactions.map((x) => (doomed.has(x.id) ? { ...x, deleted: true, updatedAt: t } : x)),
+  };
 }
 
 // ---------- analytics ----------
@@ -283,11 +354,16 @@ const csvEscape = (v) => {
 
 export function toCSV(state) {
   const cats = new Map(state.categories.map((c) => [c.id, c.name]));
+  const accs = new Map((state.accounts || []).map((a) => [a.id, a.name]));
   const rows = live(state.transactions)
     .slice()
     .sort((a, b) => a.date.localeCompare(b.date))
-    .map((t) => [t.date, t.type, cats.get(t.categoryId) || '', fromMinor(t.amount), t.note].map(csvEscape).join(','));
-  return ['date,type,category,amount,note', ...rows].join('\n') + '\n';
+    .map((t) =>
+      [t.date, t.type, cats.get(t.categoryId) || '', fromMinor(t.amount), t.note, accs.get(accountIdOf(state, t)) || '']
+        .map(csvEscape)
+        .join(','),
+    );
+  return ['date,type,category,amount,note,account', ...rows].join('\n') + '\n';
 }
 
 export function parseCSV(text) {
@@ -322,7 +398,8 @@ export function parseCSV(text) {
   return rows;
 }
 
-// Returns { state, added, skipped }. Rows already present (same date/type/category/amount/note) are skipped.
+// Returns { state, added, skipped }. Rows already present (same date/type/category/amount/note/wallet) are skipped.
+// An optional "account" column puts each row in a wallet (created if it does not exist yet).
 export function importCSV(state, text) {
   const rows = parseCSV(text);
   if (rows.length < 2) throw new Error('The CSV file has no data rows');
@@ -331,16 +408,21 @@ export function importCSV(state, text) {
   const iDate = col('date');
   const iType = col('type');
   const iAmt = col('amount');
-  if (iDate < 0 || iType < 0 || iAmt < 0) throw new Error('CSV needs the columns: date, type, amount (optional: category, note)');
+  if (iDate < 0 || iType < 0 || iAmt < 0) throw new Error('CSV needs the columns: date, type, amount (optional: category, note, account)');
   const iCat = col('category');
   const iNote = col('note');
+  const iAcc = col('account');
 
   let categories = state.categories.slice();
+  let accounts = (state.accounts || []).slice();
   const catByKey = new Map(live(categories).map((c) => [`${c.type}:${c.name.toLowerCase()}`, c]));
+  const accByName = new Map(live(accounts).map((a) => [a.name.toLowerCase(), a]));
+  const accNameOf = (id) => (accounts.find((a) => a.id === id)?.name || '').toLowerCase();
+  const defaultAcc = fallbackAccountId(state);
   const seen = new Set(
     live(state.transactions).map((t) => {
       const c = categories.find((x) => x.id === t.categoryId);
-      return [t.date, t.type, (c?.name || '').toLowerCase(), t.amount, t.note].join('|');
+      return [t.date, t.type, (c?.name || '').toLowerCase(), t.amount, t.note, accNameOf(accountIdOf(state, t))].join('|');
     }),
   );
   const added = [];
@@ -351,11 +433,22 @@ export function importCSV(state, text) {
     const amount = toMinor(r[iAmt] || '');
     const catName = iCat >= 0 ? (r[iCat] || '').trim() : '';
     const note = iNote >= 0 ? (r[iNote] || '').trim() : '';
+    const accName = iAcc >= 0 ? (r[iAcc] || '').trim() : '';
     if (!isValidDate(date) || (type !== 'income' && type !== 'expense') || !Number.isFinite(amount) || amount <= 0) {
       skipped++;
       continue;
     }
-    const key = [date, type, catName.toLowerCase(), amount, note].join('|');
+    let accountId = defaultAcc;
+    if (accName) {
+      let a = accByName.get(accName.toLowerCase());
+      if (!a) {
+        a = { id: uid(), name: accName.slice(0, 60), opening: 0, updatedAt: now() };
+        accounts = [...accounts, a];
+        accByName.set(accName.toLowerCase(), a);
+      }
+      accountId = a.id;
+    }
+    const key = [date, type, catName.toLowerCase(), amount, note, accNameOf(accountId)].join('|');
     if (seen.has(key)) {
       skipped++;
       continue;
@@ -372,7 +465,7 @@ export function importCSV(state, text) {
       }
       categoryId = c.id;
     }
-    added.push({ id: uid(), type, amount, categoryId, date, note: note.slice(0, 200), updatedAt: now() });
+    added.push({ id: uid(), type, amount, categoryId, accountId, date, note: note.slice(0, 200), updatedAt: now() });
   }
-  return { state: { ...state, categories, transactions: [...state.transactions, ...added] }, added: added.length, skipped };
+  return { state: { ...state, categories, accounts, transactions: [...state.transactions, ...added] }, added: added.length, skipped };
 }
