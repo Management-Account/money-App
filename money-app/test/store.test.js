@@ -324,3 +324,44 @@ test('CSV: wallets round-trip through export and import, new wallets are created
   const plain = importCSV(createState(), 'date,type,amount\n2026-11-01,expense,5\n');
   assert.equal(plain.state.transactions[0].accountId, DEFAULT_ACCOUNT_ID);
 });
+
+// ---- institutions ----
+import { INSTITUTIONS, searchInstitutions, institutionOf, customValue, initials } from '../js/institutions.js';
+
+test('institution catalog: unique ids, names and Arabic names present, all groups filled', () => {
+  const ids = INSTITUTIONS.map((i) => i.id);
+  assert.equal(new Set(ids).size, ids.length);
+  assert.ok(INSTITUTIONS.every((i) => i.name && i.ar && i.short));
+  for (const k of ['bank', 'wallet', 'card', 'other']) assert.ok(INSTITUTIONS.some((i) => i.kind === k));
+  assert.ok(INSTITUTIONS.filter((i) => i.kind === 'bank').length >= 35);
+});
+
+test('institution search: English, Arabic (hamza-insensitive), abbreviations, multi-word', () => {
+  assert.deepEqual(searchInstitutions('voda').map((i) => i.id), ['vfcash']);
+  assert.ok(searchInstitutions('الاهلي').some((i) => i.id === 'nbe'));
+  assert.ok(searchInstitutions('الأهلي').some((i) => i.id === 'nbe'));
+  assert.equal(searchInstitutions('cib')[0].id, 'cib');
+  assert.ok(searchInstitutions('national bank').some((i) => i.id === 'nbe'));
+  assert.equal(searchInstitutions('zzzz').length, 0);
+  assert.equal(searchInstitutions('').length, INSTITUTIONS.length);
+});
+
+test('institutionOf: catalog id, custom value, empty and unknown', () => {
+  assert.equal(institutionOf('nbe').name, 'National Bank of Egypt');
+  const c = institutionOf(customValue('  My Bank '));
+  assert.equal(c.name, 'My Bank');
+  assert.equal(c.custom, true);
+  assert.equal(institutionOf(''), null);
+  assert.equal(institutionOf('nope'), null);
+  assert.equal(initials('My Bank'), 'MB');
+});
+
+test('accounts keep their institution through sanitize and summaries; old accounts get an empty one', () => {
+  const s = createState();
+  const acc = { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', name: 'CIB Savings', opening: 100, institution: 'cib', updatedAt: 5 };
+  const old = { id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', name: 'Old', opening: 0, updatedAt: 5 };
+  const clean = sanitizeState({ ...s, accounts: [...s.accounts, acc, old] });
+  assert.equal(clean.accounts.find((a) => a.id === acc.id).institution, 'cib');
+  assert.equal(clean.accounts.find((a) => a.id === old.id).institution, '');
+  assert.equal(accountSummaries(clean).accounts.find((a) => a.id === acc.id).institution, 'cib');
+});

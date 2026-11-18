@@ -1,3 +1,5 @@
+import { pickerHTML, mountPicker } from './picker.js';
+import { institutionOf, badgeHTML } from './institutions.js';
 import {
   SCHEMA_VERSION, uid, todayStr, monthKey, shiftMonth, toMinor, fromMinor, formatMoney, createState, live, upsert, remove,
   mergeState, sanitizeState, summarize, toCSV, importCSV, isValidDate, monthsEnding, monthlySeries, balanceBefore, categoryTotals,
@@ -25,7 +27,7 @@ function load() {
       const s = JSON.parse(raw);
       if (s && s.version === SCHEMA_VERSION) {
         s.settings = { currency: 'EGP', updatedAt: 0, ...s.settings };
-        if (!Array.isArray(s.accounts)) s.accounts = createState().accounts; // saved before wallets existed
+        if (!Array.isArray(s.accounts)) s.accounts = createState().accounts; // saved before accounts existed
         return s;
       }
     }
@@ -183,7 +185,7 @@ const LOGO = svg('<rect x="3" y="6" width="18" height="13" rx="3"/><path d="M3 1
 const TABS = [
   ['home', 'Home', 'Home'],
   ['transactions', 'Transactions', 'Activity'],
-  ['wallets', 'Wallets', 'Wallets'],
+  ['wallets', 'Accounts', 'Accounts'],
   ['insights', 'Insights', 'Insights'],
   ['categories', 'Budgets', 'Budgets'],
   ['settings', 'Settings', 'Settings'],
@@ -294,22 +296,27 @@ function heroHTML(w) {
   return `<section class="card hero">
     <div class="label">Total balance</div>
     <div class="hero-value ${w.total < 0 ? 'expense' : ''}">${esc(money(w.total))}</div>
-    <div class="sub">Across ${n} wallet${n === 1 ? '' : 's'}</div>
+    <div class="sub">Across ${n} account${n === 1 ? '' : 's'}</div>
   </section>`;
 }
 
 const walletIcon = `<span class="acct-ico">${ICONS.wallets}</span>`;
+function acctIcon(a) {
+  const inst = institutionOf(a.institution);
+  return inst ? badgeHTML(inst) : walletIcon;
+}
+const instLine = (a) => { const i = institutionOf(a.institution); return i && i.name !== a.name ? `<span class="acct-inst">${esc(i.name)}</span>` : ''; };
 
 function acctCard(a) {
-  return `<div class="acct">${walletIcon}<div class="acct-body">
-    <div class="acct-name">${esc(a.name)}</div>
+  return `<div class="acct">${acctIcon(a)}<div class="acct-body">
+    <div class="acct-name">${esc(a.name)}</div>${instLine(a)}
     <div class="acct-bal ${a.balance < 0 ? 'expense' : ''}">${esc(money(a.balance))}</div>
   </div></div>`;
 }
 
 function walletCard(a) {
-  return `<button class="acct big" data-action="edit-wallet" data-id="${esc(a.id)}">${walletIcon}<span class="acct-body">
-    <span class="acct-name">${esc(a.name)}</span>
+  return `<button class="acct big" data-action="edit-wallet" data-id="${esc(a.id)}">${acctIcon(a)}<span class="acct-body">
+    <span class="acct-name">${esc(a.name)}</span>${instLine(a)}
     <span class="acct-bal ${a.balance < 0 ? 'expense' : ''}">${esc(money(a.balance))}</span>
     <span class="acct-meta">Started with ${esc(money(a.opening))}</span>
     <span class="acct-meta"><span class="${a.income > 0 ? 'income' : ''}">+${esc(money(a.income))}</span> in · <span class="${a.expense > 0 ? 'expense' : ''}">−${esc(money(a.expense))}</span> out</span>
@@ -322,7 +329,7 @@ function viewHome() {
   const w = accountSummaries(state);
   return `<h1>Overview</h1><div class="syncline hint" aria-live="polite">${esc(syncText())}</div>
     ${heroHTML(w)}
-    <div class="h2row"><h2>Wallets</h2><button class="link" data-action="tab" data-tab="wallets">Manage</button></div>
+    <div class="h2row"><h2>Accounts</h2><button class="link" data-action="tab" data-tab="wallets">Manage</button></div>
     <div class="accts">${w.accounts.map(acctCard).join('')}</div>
     <h2>This month</h2>${monthSwitcher()}
     <div class="cards">
@@ -338,10 +345,10 @@ function viewHome() {
 
 function viewWallets() {
   const w = accountSummaries(state);
-  return `<h1>Wallets</h1>${heroHTML(w)}
-    <div class="btns" style="margin:14px 0"><button class="btn primary" data-action="add-wallet">New wallet</button></div>
+  return `<h1>Accounts</h1>${heroHTML(w)}
+    <div class="btns" style="margin:14px 0"><button class="btn primary" data-action="add-wallet">New account</button></div>
     <div class="accts wide">${w.accounts.map(walletCard).join('')}</div>
-    <p class="hint">A wallet's balance is its starting balance, plus everything recorded in it as income, minus everything recorded as an expense. Choose the wallet whenever you add a transaction.</p>`;
+    <p class="hint">An account's balance is its starting balance, plus everything recorded in it as income, minus everything recorded as an expense. Choose the account whenever you add a transaction.</p>`;
 }
 
 function viewTransactions() {
@@ -351,8 +358,8 @@ function viewTransactions() {
     `<button class="${ui.ttype === v ? 'on' : ''}" data-action="ttype" data-v="${v}" aria-pressed="${ui.ttype === v}">${label}</button>`;
   return `<h1>Transactions</h1>
     <div class="filterbar">
-      <input type="search" id="q" placeholder="Search notes, categories, wallets" value="${esc(ui.q)}" aria-label="Search">
-      ${accs.length > 1 ? `<select id="f-acct" aria-label="Wallet"><option value="">All wallets</option>${accs
+      <input type="search" id="q" placeholder="Search notes, categories, accounts" value="${esc(ui.q)}" aria-label="Search">
+      ${accs.length > 1 ? `<select id="f-acct" aria-label="Account"><option value="">All accounts</option>${accs
         .map((a) => `<option value="${esc(a.id)}" ${ui.acct === a.id ? 'selected' : ''}>${esc(a.name)}</option>`)
         .join('')}</select>` : ''}
       <div class="filters" role="group" aria-label="Type">${typeBtn('', 'All')}${typeBtn('expense', 'Expenses')}${typeBtn('income', 'Income')}</div>
@@ -525,7 +532,7 @@ function drawInsights() {
 
 function viewSettings() {
   return `<h1>Settings</h1>
-    <h2>Account</h2>${accountCard()}
+    <h2>Login</h2>${accountCard()}
     <h2>Preferences</h2>
     <div class="card">
       <div class="field"><label for="cur">Currency</label>
@@ -649,7 +656,7 @@ function openTxDialog(id) {
       </div>
       <div class="field"><label for="f-amt">Amount</label>
         <input type="text" id="f-amt" name="amount" inputmode="decimal" autocomplete="off" placeholder="0.00" value="${existing ? esc(fromMinor(tx.amount)) : ''}"></div>
-      <div class="field"><label for="f-acc">Wallet</label>
+      <div class="field"><label for="f-acc">Account</label>
         <select id="f-acc" name="accountId">${walletOptions(tx.accountId)}</select></div>
       <div class="field"><label for="f-cat">Category</label>
         <select id="f-cat" name="categoryId">${categoryOptions(tx.type, tx.categoryId)}</select></div>
@@ -678,7 +685,7 @@ function openTxDialog(id) {
         const date = fd.get('date');
         if (!isValidDate(date)) return 'Pick a valid date.';
         const accountId = fd.get('accountId');
-        if (!liveAccounts(state).some((a) => a.id === accountId)) return 'Pick a wallet.';
+        if (!liveAccounts(state).some((a) => a.id === accountId)) return 'Pick an account.';
         const rec = { id: tx.id, type: fd.get('type'), amount, categoryId: fd.get('categoryId') || '', accountId, date, note: (fd.get('note') || '').trim() };
         ui.lastAccount = accountId;
         ui.month = monthKey(date);
@@ -694,18 +701,19 @@ function openTxDialog(id) {
 
 function openWalletDialog(id) {
   const existing = id ? live(state.accounts).find((a) => a.id === id) : null;
-  const acc = existing || { id: uid(), name: '', opening: 0 };
+  const acc = existing || { id: uid(), name: '', opening: 0, institution: '' };
   const count = existing ? accountSummaries(state).accounts.find((a) => a.id === id)?.count || 0 : 0;
   const canDelete = existing && liveAccounts(state).length > 1;
   openDialog(
     `<form>
-      <h3>${existing ? 'Edit wallet' : 'New wallet'}</h3>
-      <div class="field"><label for="w-name">Name (for example Cash, Bank, Savings)</label>
+      <h3>${existing ? 'Edit account' : 'New account'}</h3>
+      ${pickerHTML('inst', acc.institution)}
+      <div class="field"><label for="w-name">Account name (for example CIB Savings, Salary, Daily)</label>
         <input type="text" id="w-name" name="name" maxlength="60" autocomplete="off" value="${esc(acc.name)}"></div>
       <div class="field"><label for="w-open">Starting balance</label>
         <input type="text" id="w-open" name="opening" inputmode="decimal" autocomplete="off" placeholder="0.00" value="${existing ? esc(fromMinor(acc.opening)) : ''}">
-        <span class="hint">What was in this wallet before the transactions you record here. Balance = starting balance + income - expenses. Use a minus sign for debt, like -200.</span></div>
-      ${existing && !canDelete ? '<p class="hint">This is your only wallet, so it cannot be deleted.</p>' : ''}
+        <span class="hint">What was in this account before the transactions you record here. Balance = starting balance + income - expenses. Use a minus sign for debt, like -200.</span></div>
+      ${existing && !canDelete ? '<p class="hint">This is your only account, so it cannot be deleted.</p>' : ''}
       <div class="error" role="alert"></div>
       <div class="actions">
         ${canDelete ? '<button type="button" class="btn danger" data-delete>Delete</button>' : ''}
@@ -716,25 +724,34 @@ function openWalletDialog(id) {
     </form>`,
     {
       confirmText: count
-        ? `Delete the wallet "${acc.name}" and its ${count} transaction${count === 1 ? '' : 's'}? This cannot be undone.`
-        : `Delete the wallet "${acc.name}"?`,
+        ? `Delete the account "${acc.name}" and its ${count} transaction${count === 1 ? '' : 's'}? This cannot be undone.`
+        : `Delete the account "${acc.name}"?`,
       onOpen(form) {
-        if (!existing) form.querySelector('#w-name').focus();
+        const nameEl = form.querySelector('#w-name');
+        // Fill the name from the chosen institution unless the user typed their own name.
+        let auto = !existing || !acc.name || acc.name === institutionOf(acc.institution)?.name;
+        nameEl.addEventListener('input', () => { auto = false; });
+        mountPicker(form.querySelector('#inst'), (value, label) => {
+          if (auto && label) nameEl.value = label;
+          else if (auto && !value) nameEl.value = '';
+        });
+        if (!existing) form.querySelector('#inst-input').focus();
       },
       onSubmit(fd) {
         const name = (fd.get('name') || '').trim();
-        if (!name) return 'Give the wallet a name.';
-        if (liveAccounts(state).some((a) => a.id !== acc.id && a.name.toLowerCase() === name.toLowerCase())) return 'You already have a wallet with that name.';
+        if (!name) return 'Give the account a name.';
+        if (liveAccounts(state).some((a) => a.id !== acc.id && a.name.toLowerCase() === name.toLowerCase())) return 'You already have an account with that name. Add something to tell them apart, like "CIB Savings".';
         const raw = (fd.get('opening') || '').trim();
         const opening = raw ? toMinorSigned(raw) : 0;
         if (!Number.isFinite(opening)) return 'Starting balance must be a number like 500 or -120.50.';
-        setState({ ...state, accounts: upsert(state.accounts, { id: acc.id, name, opening }) });
+        const institution = (fd.get('institution') || '').trim();
+        setState({ ...state, accounts: upsert(state.accounts, { id: acc.id, name, opening, institution }) });
       },
       onDelete() {
         if (ui.acct === acc.id) ui.acct = '';
         if (ui.lastAccount === acc.id) ui.lastAccount = '';
         setState(removeAccount(state, acc.id));
-        toast('Wallet deleted');
+        toast('Account deleted');
       },
     },
   );
