@@ -156,7 +156,5 @@ export function mountPicker(root, onChange = () => {}) {
     hide();
   });
 
-  if (document.activeElement === input) show(); // dialog already focused it before we attached
-
-  return { setValue, get value() { return hidden.value; } };
+  return { show, setValue, get value() { return hidden.value; } };
 }

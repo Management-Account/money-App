@@ -222,9 +222,9 @@ const toCat = (c) => ({
   id: c.id, name: c.name, type: c.type, budget: c.budget || 0, updated_at: c.updatedAt || 0, deleted: !!c.deleted,
 });
 const fromAcc = (r) => ({
-  id: r.id, name: r.name, opening: Number(r.opening) || 0, institution: r.institution || '', updatedAt: Number(r.updated_at) || 0, ...(r.deleted ? { deleted: true } : {}),
+  id: r.id, name: r.name, opening: Number(r.opening) || 0, institution: r.institution || '', logo: r.logo || '', updatedAt: Number(r.updated_at) || 0, ...(r.deleted ? { deleted: true } : {}),
 });
-const toAcc = (a) => ({ id: a.id, name: a.name, opening: a.opening || 0, institution: a.institution || '', updated_at: a.updatedAt || 0, deleted: !!a.deleted });
+const toAcc = (a) => ({ id: a.id, name: a.name, opening: a.opening || 0, institution: a.institution || '', logo: a.logo || '', updated_at: a.updatedAt || 0, deleted: !!a.deleted });
 const fromTx = (r) => ({
   id: r.id, type: r.type, amount: Number(r.amount), categoryId: r.category_id || '', accountId: r.account_id || '', date: r.date, note: r.note || '',
   updatedAt: Number(r.updated_at) || 0, ...(r.deleted ? { deleted: true } : {}),

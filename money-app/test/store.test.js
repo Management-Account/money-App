@@ -394,3 +394,15 @@ test('rangeSeries, balanceBeforeDate and categoryTotalsRange only count the chos
   assert.equal(categoryTotalsRange(s, '2026-11-12', '2026-11-14')[0].total, 500);
   assert.equal(rangeSeries(s, '2026-01-01', '2026-12-31', 'month').find((r) => r.key === '2026-11').expense, 1499);
 });
+
+import { validLogo } from '../js/store.js';
+test('uploaded logos: only small image data URLs are kept, and they survive sanitize', () => {
+  const ok = 'data:image/png;base64,iVBORw0KGgo=';
+  assert.equal(validLogo(ok), ok);
+  assert.equal(validLogo('http://evil.example/x.png'), '');
+  assert.equal(validLogo('data:text/html;base64,PHNjcmlwdD4='), '');
+  assert.equal(validLogo('data:image/png;base64,' + 'A'.repeat(70000)), '');
+  const s = createState();
+  const acc = { id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', name: 'X', opening: 0, logo: ok, updatedAt: 1 };
+  assert.equal(sanitizeState({ ...s, accounts: [...s.accounts, acc] }).accounts.find((a) => a.id === acc.id).logo, ok);
+});

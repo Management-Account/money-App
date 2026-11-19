@@ -31,7 +31,7 @@ npm test         # unit tests for the data logic
 2. **SQL Editor → New query**: paste the contents of `supabase/schema.sql` and **Run**. This creates the tables and the
    row-level security rules (each user can only read/write their own rows).
    **Updating from an earlier version? Run the new `schema.sql` again before using the new app.** It is safe to re-run: it adds
-   the accounts table, the account column and the new bank column, and keeps all your data. Until you do, sync shows a "Sync problem" message (your data stays safe on the device).
+   the accounts table, the account column and the new bank and logo columns, and keeps all your data. Until you do, sync shows a "Sync problem" message (your data stays safe on the device).
 3. **Project Settings → API**: copy the **Project URL** and the **anon / publishable** key into `js/config.js`.
    (The anon key is meant to be public. Never use the `service_role` / secret key in this app.)
 4. **Authentication → Providers → Email**: turn **Confirm email OFF** (and leave the Email provider enabled).
@@ -45,7 +45,7 @@ npm test         # unit tests for the data logic
 2. On vercel.com: **Add New → Project**, import the repo. Framework preset: **Other**. Leave build command and output directory empty.
 3. Deploy and open the URL.
 
-After every deploy that changes files, bump `CACHE` in `sw.js` (e.g. `pocket-ledger-v7`) so browsers pick up the update.
+After every deploy that changes files, bump `CACHE` in `sw.js` (e.g. `pocket-ledger-v9`) so browsers pick up the update.
 
 ## How sync works
 - The app always reads and writes local data first, so it is fast and works offline.
@@ -93,7 +93,9 @@ Money is stored as integer minor units (cents/piasters). This makes cloud sync s
   public lists (Wikipedia and 2026 bank directories); the Central Bank of Egypt's own list could not be fetched. Banks merge, rename and close,
   so check it occasionally. To add or fix one, edit that file. Keep each `id` unchanged once people may have picked it.
 - Entries like Onebank (formerly Bank Audi / Blom) and some wallet names are the least certain; verify them if they matter to you.
-- **Logos**: official logos are trademarks, so only logos you supply are shown (Banque Misr's is included). Everything else gets a generated badge with its initials.
+- **Logos**: official logos are trademarks, so no official logos are bundled. Every institution gets a generated badge with its initials, unless a logo is set.
+  **In the app**, anyone can upload a picture for an account (New account or Edit account, "Upload image"). It is shrunk to a 96px square and saved with that account, so it syncs to every device. It applies to that account only.
+  **For everyone**, a logo can be added to the list itself:
   To add a logo, save the image in `logos/` named after the institution id (`nbe.png`, `cib.svg`, `vfcash.png`; ids are in `js/institutions.js`),
-  run `node scripts/build-logos.mjs` (or `npm run logos`), and add the file to the list in `sw.js` if you want it available offline. Use only logos you have the right to use.
+  run `node scripts/build-logos.mjs` (or `npm run logos`), and add the file to the list in `sw.js` if you want it available offline. Every badge has the same size, so use square logos or just the emblem (wide logos with text become unreadably small). Use only logos you have the right to use.
 - Custom banks a user types are saved with the account (stored as `~Name`) and are not added to the shared list.

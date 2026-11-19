@@ -218,6 +218,7 @@ export function sanitizeState(obj) {
       name: a.name.trim().slice(0, 60),
       opening: Number.isSafeInteger(a.opening) ? a.opening : 0,
       institution: typeof a.institution === 'string' ? a.institution.trim().slice(0, 61) : '',
+      logo: validLogo(a.logo),
       updatedAt: Number.isFinite(a.updatedAt) ? a.updatedAt : 0,
       ...(a.deleted ? { deleted: true } : {}),
     }));
@@ -276,9 +277,13 @@ export function accountIdOf(state, t) {
 }
 
 // Balance of a wallet = starting balance + all its income - all its expenses (all time).
+// A user-uploaded logo is a small image stored inline as a data URL.
+export const MAX_LOGO_CHARS = 60000;
+export const validLogo = (v) => (typeof v === 'string' && /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(v) && v.length <= MAX_LOGO_CHARS ? v : '');
+
 export function accountSummaries(state) {
   const accs = liveAccounts(state);
-  const rows = new Map(accs.map((a) => [a.id, { id: a.id, name: a.name, institution: a.institution || '', opening: a.opening || 0, income: 0, expense: 0, count: 0, balance: 0 }]));
+  const rows = new Map(accs.map((a) => [a.id, { id: a.id, name: a.name, institution: a.institution || '', logo: a.logo || '', opening: a.opening || 0, income: 0, expense: 0, count: 0, balance: 0 }]));
   for (const t of live(state.transactions)) {
     const r = rows.get(accountIdOf(state, t));
     if (!r) continue;

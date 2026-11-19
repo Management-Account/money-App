@@ -2,7 +2,7 @@ import { pickerHTML, mountPicker } from './picker.js';
 import { institutionOf, badgeHTML } from './institutions.js';
 import {
   SCHEMA_VERSION, uid, todayStr, monthKey, shiftMonth, toMinor, fromMinor, formatMoney, createState, live, upsert, remove,
-  mergeState, sanitizeState, summarize, toCSV, importCSV, isValidDate, monthsEnding, addDays, daysBetween, unitFor, rangeSeries, balanceBeforeDate, categoryTotalsRange,
+  mergeState, sanitizeState, summarize, toCSV, importCSV, isValidDate, monthsEnding, addDays, daysBetween, unitFor, rangeSeries, balanceBeforeDate, categoryTotalsRange, validLogo,
   toMinorSigned, liveAccounts, fallbackAccountId, accountIdOf, accountSummaries, removeAccount,
 } from './store.js';
 import { getCurrencies } from './currencies.js';
@@ -302,6 +302,7 @@ function heroHTML(w) {
 
 const walletIcon = `<span class="acct-ico">${ICONS.wallets}</span>`;
 function acctIcon(a) {
+  if (a.logo) return `<span class="ibadge img" aria-hidden="true"><img src="${esc(a.logo)}" alt=""></span>`;
   const inst = institutionOf(a.institution);
   return inst ? badgeHTML(inst) : walletIcon;
 }
@@ -748,15 +749,42 @@ function openTxDialog(id) {
   );
 }
 
+// Shrinks a picked image to a 96px square (centre-cropped) and returns a small data URL.
+async function imageToLogo(file) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = no; i.src = url; });
+    const side = Math.min(img.naturalWidth, img.naturalHeight);
+    if (!side) throw new Error('empty');
+    const c = document.createElement('canvas');
+    c.width = c.height = 96;
+    c.getContext('2d').drawImage(img, (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2, side, side, 0, 0, 96, 96);
+    let out = c.toDataURL('image/png');
+    if (!validLogo(out)) out = c.toDataURL('image/jpeg', 0.85);
+    if (!validLogo(out)) throw new Error('too big');
+    return out;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
 function openWalletDialog(id) {
   const existing = id ? live(state.accounts).find((a) => a.id === id) : null;
-  const acc = existing || { id: uid(), name: '', opening: 0, institution: '' };
+  const acc = existing || { id: uid(), name: '', opening: 0, institution: '', logo: '' };
   const count = existing ? accountSummaries(state).accounts.find((a) => a.id === id)?.count || 0 : 0;
   const canDelete = existing && liveAccounts(state).length > 1;
   openDialog(
     `<form>
       <h3>${existing ? 'Edit account' : 'New account'}</h3>
       ${pickerHTML('inst', acc.institution)}
+      <div class="field logo-field"><span class="lbl">Logo</span>
+        <div class="logo-row"><span id="logo-prev"></span>
+          <button type="button" class="btn" id="logo-pick">Upload image</button>
+          <button type="button" class="btn" id="logo-clear" hidden>Remove</button>
+        </div>
+        <input type="file" id="logo-file" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
+        <input type="hidden" name="logo" value="${esc(acc.logo || '')}">
+        <span class="hint">Optional. Pick any picture for this bank or account (it is shrunk to a small square).</span></div>
       <div class="field"><label for="w-name">Account name (for example CIB Savings, Salary, Daily)</label>
         <input type="text" id="w-name" name="name" maxlength="60" autocomplete="off" value="${esc(acc.name)}"></div>
       <div class="field"><label for="w-open">Starting balance</label>
@@ -780,11 +808,39 @@ function openWalletDialog(id) {
         // Fill the name from the chosen institution unless the user typed their own name.
         let auto = !existing || !acc.name || acc.name === institutionOf(acc.institution)?.name;
         nameEl.addEventListener('input', () => { auto = false; });
-        mountPicker(form.querySelector('#inst'), (value, label) => {
+        const logoEl = form.querySelector('input[name="logo"]');
+        const prev = form.querySelector('#logo-prev');
+        const clearBtn = form.querySelector('#logo-clear');
+        let instValue = acc.institution || '';
+        const showLogo = () => {
+          prev.innerHTML = acctIcon({ logo: logoEl.value, institution: instValue });
+          clearBtn.hidden = !logoEl.value;
+        };
+        const picker = mountPicker(form.querySelector('#inst'), (value, label) => {
+          instValue = value;
           if (auto && label) nameEl.value = label;
           else if (auto && !value) nameEl.value = '';
+          showLogo();
         });
-        if (!existing) form.querySelector('#inst-input').focus();
+        showLogo();
+        const fileEl = form.querySelector('#logo-file');
+        form.querySelector('#logo-pick').addEventListener('click', () => fileEl.click());
+        clearBtn.addEventListener('click', () => { logoEl.value = ''; showLogo(); });
+        fileEl.addEventListener('change', async () => {
+          const f = fileEl.files[0];
+          fileEl.value = '';
+          if (!f) return;
+          const err = form.querySelector('.error');
+          try {
+            logoEl.value = await imageToLogo(f);
+            err.textContent = '';
+          } catch {
+            err.textContent = 'That file could not be read as a picture. Try a PNG or JPEG.';
+          }
+          showLogo();
+        });
+        // New account: open the list right away. Editing: keep it closed so the form is usable.
+        if (!existing) { form.querySelector('#inst-input').focus(); picker.show(); } else document.activeElement?.blur?.();
       },
       onSubmit(fd) {
         const name = (fd.get('name') || '').trim();
@@ -794,7 +850,8 @@ function openWalletDialog(id) {
         const opening = raw ? toMinorSigned(raw) : 0;
         if (!Number.isFinite(opening)) return 'Starting balance must be a number like 500 or -120.50.';
         const institution = (fd.get('institution') || '').trim();
-        setState({ ...state, accounts: upsert(state.accounts, { id: acc.id, name, opening, institution }) });
+        const logo = validLogo(fd.get('logo') || '');
+        setState({ ...state, accounts: upsert(state.accounts, { id: acc.id, name, opening, institution, logo }) });
       },
       onDelete() {
         if (ui.acct === acc.id) ui.acct = '';
