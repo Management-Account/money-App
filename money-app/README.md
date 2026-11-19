@@ -17,7 +17,9 @@ on any device that opens the site. No build step: plain HTML, CSS and JavaScript
 - Same data on every device (Supabase database, each user sees only their own rows)
 - **Insights tab**: income vs expenses, running balance, and spending by category for Day (today), Week (7 days), 1 month (30 days), 3 / 6 / 12 months, or a custom date range (hover or tap a chart for exact values; every chart has a "View as table" twin)
 - **All world currencies**: pick any of 160+ ISO currencies in Settings (one currency per account)
-- Modern dark "neon glass" theme, works offline
+- **Themes tab**: Neon Night (default), Soft Light, Ocean and Sunset. The choice is saved to your account and used on every device
+- **Category emojis**: every category has an emoji (built-in ones come pre-set, new ones are suggested from the name); pick one from the grid or type/paste your own
+- Works offline
 
 ## Run locally
 ```
@@ -31,7 +33,7 @@ npm test         # unit tests for the data logic
 2. **SQL Editor → New query**: paste the contents of `supabase/schema.sql` and **Run**. This creates the tables and the
    row-level security rules (each user can only read/write their own rows).
    **Updating from an earlier version? Run the new `schema.sql` again before using the new app.** It is safe to re-run: it adds
-   the accounts table, the account column and the new bank and logo columns, and keeps all your data. Until you do, sync shows a "Sync problem" message (your data stays safe on the device).
+   the accounts table, the account column and the new bank, logo, category emoji and theme columns, and keeps all your data. Until you do, sync shows a "Sync problem" message (your data stays safe on the device).
 3. **Project Settings → API**: copy the **Project URL** and the **anon / publishable** key into `js/config.js`.
    (The anon key is meant to be public. Never use the `service_role` / secret key in this app.)
 4. **Authentication → Providers → Email**: turn **Confirm email OFF** (and leave the Email provider enabled).
@@ -45,7 +47,7 @@ npm test         # unit tests for the data logic
 2. On vercel.com: **Add New → Project**, import the repo. Framework preset: **Other**. Leave build command and output directory empty.
 3. Deploy and open the URL.
 
-After every deploy that changes files, bump `CACHE` in `sw.js` (e.g. `pocket-ledger-v9`) so browsers pick up the update.
+After every deploy that changes files, bump `CACHE` in `sw.js` (e.g. `pocket-ledger-v10`) so browsers pick up the update.
 
 ## How sync works
 - The app always reads and writes local data first, so it is fast and works offline.
@@ -64,6 +66,8 @@ After every deploy that changes files, bump `CACHE` in `sw.js` (e.g. `pocket-led
 | `js/currencies.js` | List of all ISO 4217 currencies |
 | `js/institutions.js` | Catalog of Egyptian banks, wallets and cards, search, badges |
 | `js/picker.js` | The searchable bank dropdown |
+| `js/emoji.js` | Category emojis: picker choices, defaults, suggestions |
+| `js/themes.js` | Theme list; the colours are in `styles.css` (`:root[data-theme=...]`) |
 | `js/logos.js`, `logos/` | Optional real logo files (see below) |
 | `js/sync.js` | Accounts (Supabase Auth) and database sync (REST), no extra libraries |
 | `js/config.js` | Your Supabase URL and anon key |
@@ -99,3 +103,7 @@ Money is stored as integer minor units (cents/piasters). This makes cloud sync s
   To add a logo, save the image in `logos/` named after the institution id (`nbe.png`, `cib.svg`, `vfcash.png`; ids are in `js/institutions.js`),
   run `node scripts/build-logos.mjs` (or `npm run logos`), and add the file to the list in `sw.js` if you want it available offline. Every badge has the same size, so use square logos or just the emblem (wide logos with text become unreadably small). Use only logos you have the right to use.
 - Custom banks a user types are saved with the account (stored as `~Name`) and are not added to the shared list.
+
+## Themes
+Every colour in `styles.css` comes from variables on `:root`. A theme is one block, `:root[data-theme="name"] { ... }`, that overrides them, plus an entry in `js/themes.js`
+(and the allowed names in the small script at the top of `index.html` and in `themeMeta`). Check chart colours on a new surface with the contrast rules: series colours need 3:1 against the card colour.

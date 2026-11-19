@@ -215,11 +215,11 @@ async function fetchAll(table) {
 }
 
 const fromCat = (r) => ({
-  id: r.id, name: r.name, type: r.type, budget: Number(r.budget) || 0, updatedAt: Number(r.updated_at) || 0,
+  id: r.id, name: r.name, type: r.type, budget: Number(r.budget) || 0, emoji: r.emoji || '', updatedAt: Number(r.updated_at) || 0,
   ...(r.deleted ? { deleted: true } : {}),
 });
 const toCat = (c) => ({
-  id: c.id, name: c.name, type: c.type, budget: c.budget || 0, updated_at: c.updatedAt || 0, deleted: !!c.deleted,
+  id: c.id, name: c.name, type: c.type, budget: c.budget || 0, emoji: c.emoji || '', updated_at: c.updatedAt || 0, deleted: !!c.deleted,
 });
 const fromAcc = (r) => ({
   id: r.id, name: r.name, opening: Number(r.opening) || 0, institution: r.institution || '', logo: r.logo || '', updatedAt: Number(r.updated_at) || 0, ...(r.deleted ? { deleted: true } : {}),
@@ -252,7 +252,7 @@ export async function syncNow(state) {
     categories: rc.map(fromCat),
     accounts: ra.map(fromAcc),
     transactions: rt.map(fromTx),
-    settings: rs[0] ? { currency: rs[0].currency, updatedAt: Number(rs[0].updated_at) || 0 } : undefined,
+    settings: rs[0] ? { currency: rs[0].currency, theme: rs[0].theme || undefined, updatedAt: Number(rs[0].updated_at) || 0 } : undefined,
   };
   const merged = mergeState(state, remote);
 
@@ -264,7 +264,7 @@ export async function syncNow(state) {
   await push('accounts', newer(merged.accounts, remote.accounts).map(toAcc));
   await push('transactions', newer(merged.transactions, remote.transactions).map(toTx));
   if (merged.settings.updatedAt > (remote.settings?.updatedAt ?? 0)) {
-    await push('settings', [{ currency: merged.settings.currency, updated_at: merged.settings.updatedAt }]);
+    await push('settings', [{ currency: merged.settings.currency, theme: merged.settings.theme || 'neon', updated_at: merged.settings.updatedAt }]);
   }
   return merged;
 }

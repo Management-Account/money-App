@@ -1,3 +1,5 @@
+import { validEmoji } from './emoji.js';
+import { isTheme, DEFAULT_THEME } from './themes.js';
 // Pure data logic for the money app: no DOM, no storage, so it can be unit-tested
 // in Node and reused later by a sync backend.
 //
@@ -117,7 +119,7 @@ export const DEFAULT_ACCOUNT_ID = 'c0a7f3e2-5b1d-4f6a-9c84-2d3e7a1b6f90';
 export function createState() {
   return {
     version: SCHEMA_VERSION,
-    settings: { currency: 'EGP', updatedAt: 0 },
+    settings: { currency: 'EGP', theme: 'neon', updatedAt: 0 },
     accounts: [{ id: DEFAULT_ACCOUNT_ID, name: 'Cash', opening: 0, updatedAt: 0 }],
     categories: DEFAULT_CATEGORIES.map(([id, name, type]) => ({ id, name, type, budget: 0, updatedAt: 0 })),
     transactions: [],
@@ -155,7 +157,7 @@ export function mergeCollections(local, remote) {
 export function mergeState(local, remote) {
   const ls = local.settings;
   const rs = remote.settings;
-  const settings = rs && (rs.updatedAt ?? 0) > (ls.updatedAt ?? 0) ? { ...ls, ...rs } : ls;
+  const settings = rs && (rs.updatedAt ?? 0) > (ls.updatedAt ?? 0) ? { ...ls, ...rs, theme: rs.theme || ls.theme } : ls;
   return {
     ...local,
     settings,
@@ -186,6 +188,7 @@ export function sanitizeState(obj) {
       name: c.name.slice(0, 60),
       type: c.type,
       budget: Number.isSafeInteger(c.budget) && c.budget > 0 ? c.budget : 0,
+      emoji: validEmoji(c.emoji),
       updatedAt: Number.isFinite(c.updatedAt) ? c.updatedAt : 0,
       ...(c.deleted ? { deleted: true } : {}),
     }));
@@ -225,7 +228,8 @@ export function sanitizeState(obj) {
   const cur = typeof obj.settings?.currency === 'string' ? obj.settings.currency.toUpperCase() : '';
   const currency = /^[A-Z]{3}$/.test(cur) ? cur : 'EGP';
   const updatedAt = Number.isFinite(obj.settings?.updatedAt) ? obj.settings.updatedAt : 0;
-  return { version: SCHEMA_VERSION, settings: { currency, updatedAt }, categories, accounts, transactions };
+  const theme = isTheme(obj.settings?.theme) ? obj.settings.theme : DEFAULT_THEME;
+  return { version: SCHEMA_VERSION, settings: { currency, theme, updatedAt }, categories, accounts, transactions };
 }
 
 // ---------- summaries ----------

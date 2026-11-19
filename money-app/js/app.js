@@ -1,4 +1,6 @@
 import { pickerHTML, mountPicker } from './picker.js';
+import { EMOJI_GROUPS, categoryEmoji, suggestEmoji, validEmoji } from './emoji.js';
+import { THEMES, DEFAULT_THEME, isTheme, themeMeta } from './themes.js';
 import { institutionOf, badgeHTML } from './institutions.js';
 import {
   SCHEMA_VERSION, uid, todayStr, monthKey, shiftMonth, toMinor, fromMinor, formatMoney, createState, live, upsert, remove,
@@ -131,6 +133,8 @@ function refreshView() {
 
 const money = (n) => formatMoney(n, state.settings.currency);
 const catName = (id) => state.categories.find((c) => c.id === id)?.name || 'Uncategorized';
+const catById = (id) => state.categories.find((c) => c.id === id);
+const catLabel = (id) => (id && catById(id) ? `${categoryEmoji(catById(id))} ${catById(id).name}` : '🏷️ Uncategorized');
 const acctName = (id) => (state.accounts || []).find((a) => a.id === id)?.name || '';
 
 function monthLabel(key) {
@@ -174,6 +178,7 @@ const ICONS = {
   home: svg('<path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/>'),
   transactions: svg('<path d="M8 6h13M8 12h13M8 18h13"/><circle cx="3.5" cy="6" r="1"/><circle cx="3.5" cy="12" r="1"/><circle cx="3.5" cy="18" r="1"/>'),
   insights: svg('<path d="M5 20v-7M11 20V5M17 20v-10M3 20h18"/>'),
+  themes: svg('<path d="M12 3a9 9 0 1 0 0 18c1.1 0 1.7-.8 1.7-1.7 0-.5-.2-.9-.5-1.2-.3-.3-.5-.7-.5-1.2 0-1 .8-1.7 1.7-1.7H17a4 4 0 0 0 4-4c0-4.4-4-7.2-9-7.2z"/><circle cx="7.5" cy="11" r="1"/><circle cx="10" cy="7" r="1"/><circle cx="14.5" cy="7" r="1"/>'),
   wallets: svg('<rect x="2.5" y="5" width="19" height="14" rx="3"/><path d="M2.5 10h19M6.5 15h4"/>'),
   categories: svg('<path d="M12 3v9h9"/><path d="M20.5 15A9 9 0 1 1 9 3.5"/>'),
   settings: svg('<path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/>'),
@@ -188,6 +193,7 @@ const TABS = [
   ['wallets', 'Accounts', 'Accounts'],
   ['insights', 'Insights', 'Insights'],
   ['categories', 'Budgets', 'Budgets'],
+  ['themes', 'Themes', 'Themes'],
   ['settings', 'Settings', 'Settings'],
 ];
 
@@ -230,7 +236,7 @@ function txRow(t, multi, withDate = false) {
   const sign = t.type === 'income' ? '+' : '−';
   const sub = [withDate ? dayLabel(t.date) : '', t.note, multi ? acctName(accountIdOf(state, t)) : ''].filter(Boolean).join(' · ');
   return `<button class="row" data-action="edit-tx" data-id="${esc(t.id)}">
-    <span><span class="t">${esc(catName(t.categoryId))}</span>
+    <span><span class="t">${esc(catLabel(t.categoryId))}</span>
       ${sub ? `<br><span class="sub">${esc(sub)}</span>` : ''}</span>
     <span class="amt ${t.type}">${sign}${esc(money(t.amount))}</span>
   </button>`;
@@ -375,7 +381,7 @@ function viewCategories() {
       cats
         .map(
           (c) => `<button class="row" data-action="edit-cat" data-id="${esc(c.id)}">
-            <span class="t">${esc(c.name)}</span>
+            <span class="t">${esc(categoryEmoji(c))} ${esc(c.name)}</span>
             <span class="sub">${type === 'expense' ? (c.budget > 0 ? 'Budget ' + esc(money(c.budget)) : 'No budget') : ''}</span>
           </button>`,
         )
@@ -472,7 +478,7 @@ function insightsData() {
   return {
     per, unit, rows, labels, income, expense, net: income - expense, balance, units,
     rate: income > 0 ? (income - expense) / income : null,
-    cats: top.map((c) => ({ ...c, share: expense ? c.total / expense : 0 })),
+    cats: top.map((c) => ({ ...c, name: c.other ? `📦 ${c.name}` : catLabel(c.id), share: expense ? c.total / expense : 0 })),
     hasData: income > 0 || expense > 0,
   };
 }
@@ -631,7 +637,28 @@ function viewAuth() {
   </div>`;
 }
 
+function applyTheme() {
+  const id = isTheme(state.settings.theme) ? state.settings.theme : DEFAULT_THEME;
+  document.documentElement.dataset.theme = id;
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', themeMeta(id));
+}
+
+function viewThemes() {
+  const cur = isTheme(state.settings.theme) ? state.settings.theme : DEFAULT_THEME;
+  return `<h1>Themes</h1>
+    <p class="hint">Pick how the app looks. It applies right away and is saved to your account, so every device uses it.</p>
+    <div class="themes">${THEMES.map((t) => `<button class="theme ${t.id === cur ? 'on' : ''}" data-action="theme" data-id="${t.id}" aria-pressed="${t.id === cur}">
+      <span class="swatch" style="background:${t.bg}" aria-hidden="true">
+        <span class="sw-card" style="background:${t.card}"><i style="background:${t.text}"></i><i style="background:${t.text};width:46%"></i></span>
+        <span class="sw-btn" style="background:linear-gradient(135deg,${t.accent2},${t.accent})"></span>
+      </span>
+      <span class="th-name">${esc(t.name)}${t.id === cur ? ' <span class="th-on">✓ In use</span>' : ''}</span>
+      <span class="th-blurb">${esc(t.blurb)}</span>
+    </button>`).join('')}</div>`;
+}
+
 function render() {
+  applyTheme();
   const authScreen = cloudEnabled && !getSession();
   document.body.classList.toggle('auth-mode', authScreen);
   if (authScreen) {
@@ -640,7 +667,7 @@ function render() {
     return;
   }
   renderNav();
-  const views = { home: viewHome, transactions: viewTransactions, wallets: viewWallets, insights: viewInsights, categories: viewCategories, settings: viewSettings };
+  const views = { home: viewHome, transactions: viewTransactions, wallets: viewWallets, insights: viewInsights, categories: viewCategories, themes: viewThemes, settings: viewSettings };
   $('#main').innerHTML = views[ui.tab]();
   drawInsights();
 }
@@ -678,7 +705,7 @@ function categoryOptions(type, selected) {
     live(state.categories)
       .filter((c) => c.type === type)
       .sort(byName)
-      .map((c) => `<option value="${esc(c.id)}" ${c.id === selected ? 'selected' : ''}>${esc(c.name)}</option>`)
+      .map((c) => `<option value="${esc(c.id)}" ${c.id === selected ? 'selected' : ''}>${esc(categoryEmoji(c))} ${esc(c.name)}</option>`)
       .join('')
   );
 }
@@ -865,12 +892,20 @@ function openWalletDialog(id) {
 
 function openCatDialog(id) {
   const existing = id ? live(state.categories).find((c) => c.id === id) : null;
-  const cat = existing || { id: uid(), name: '', type: 'expense', budget: 0 };
+  const cat = existing || { id: uid(), name: '', type: 'expense', budget: 0, emoji: '' };
+  const picked = existing ? categoryEmoji(existing) : '';
   openDialog(
     `<form>
       <h3>${existing ? 'Edit category' : 'New category'}</h3>
       <div class="field"><label for="c-name">Name</label>
         <input type="text" id="c-name" name="name" maxlength="60" autocomplete="off" value="${esc(cat.name)}"></div>
+      <div class="field emoji-field"><span class="lbl">Icon (emoji)</span>
+        <div class="emoji-row"><span class="emoji-prev" id="e-prev" aria-live="polite">${esc(picked || '🏷️')}</span>
+          <input type="text" id="e-own" maxlength="8" autocomplete="off" placeholder="Type or paste your own" aria-label="Type your own emoji">
+          <button type="button" class="btn" id="e-clear">Auto</button></div>
+        <input type="hidden" name="emoji" value="${esc(existing ? cat.emoji || '' : '')}">
+        <div class="emoji-grid" role="group" aria-label="Pick an emoji">${EMOJI_GROUPS.map(([g, list]) => `<span class="eg-name">${esc(g)}</span>${list.map((e) => `<button type="button" class="em" data-e="${e}" aria-label="${e}">${e}</button>`).join('')}`).join('')}</div>
+        <span class="hint">Shown next to the category everywhere. "Auto" picks one from the name.</span></div>
       <div class="field"><label for="c-type">Type</label>
         <select id="c-type" name="type" ${existing ? 'disabled' : ''}>
           <option value="expense" ${cat.type === 'expense' ? 'selected' : ''}>Expense</option>
@@ -893,6 +928,26 @@ function openCatDialog(id) {
         const sync = () => (wrap.hidden = sel.value !== 'expense');
         sel.addEventListener('change', sync);
         sync();
+        const hid = form.querySelector('input[name="emoji"]');
+        const prev = form.querySelector('#e-prev');
+        const own = form.querySelector('#e-own');
+        const nameEl = form.querySelector('#c-name');
+        const show = () => { prev.textContent = validEmoji(hid.value) || suggestEmoji(nameEl.value) || categoryEmoji({ ...cat, name: nameEl.value, emoji: '', type: sel.value }); };
+        form.querySelector('.emoji-grid').addEventListener('click', (e) => {
+          const b = e.target.closest('.em');
+          if (!b) return;
+          hid.value = b.dataset.e;
+          own.value = '';
+          show();
+        });
+        own.addEventListener('input', () => {
+          const first = [...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(own.value.trim())][0]?.segment || '';
+          hid.value = validEmoji(first);
+          show();
+        });
+        form.querySelector('#e-clear').addEventListener('click', () => { hid.value = ''; own.value = ''; show(); });
+        nameEl.addEventListener('input', () => { if (!hid.value) show(); });
+        sel.addEventListener('change', () => { if (!hid.value) show(); });
       },
       onSubmit(fd) {
         const name = (fd.get('name') || '').trim();
@@ -906,7 +961,7 @@ function openCatDialog(id) {
         }
         const clash = live(state.categories).some((c) => c.id !== cat.id && c.type === type && c.name.toLowerCase() === name.toLowerCase());
         if (clash) return 'A category with that name already exists.';
-        setState({ ...state, categories: upsert(state.categories, { id: cat.id, name, type, budget }) });
+        setState({ ...state, categories: upsert(state.categories, { id: cat.id, name, type, budget, emoji: validEmoji(fd.get('emoji') || '') }) });
       },
       onDelete() {
         setState({ ...state, categories: remove(state.categories, cat.id) });
@@ -935,6 +990,12 @@ document.addEventListener('click', async (e) => {
       break;
     case 'edit-tx':
       openTxDialog(id);
+      break;
+    case 'theme':
+      if (isTheme(id) && id !== state.settings.theme) {
+        setState({ ...state, settings: { ...state.settings, theme: id, updatedAt: Date.now() } });
+        toast(`${THEMES.find((t) => t.id === id).name} theme on`);
+      }
       break;
     case 'add-cat':
       openCatDialog();
