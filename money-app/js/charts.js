@@ -57,8 +57,54 @@ function xLabels(labels, left, slot, height) {
     .join('');
 }
 
+let uidN = 0;
+const nextId = () => `c${++uidN}`;
+
+// Smooth line through the points that never overshoots (monotone cubic), for the "smooth" and "glow" styles.
+function smoothPath(pts) {
+  const n = pts.length;
+  const lin = () => pts.map(([x, y], i) => `${i ? 'L' : 'M'}${x.toFixed(1)},${y.toFixed(1)}`).join('');
+  if (n < 3) return lin();
+  const s = [];
+  for (let i = 0; i < n - 1; i++) s.push((pts[i + 1][1] - pts[i][1]) / (pts[i + 1][0] - pts[i][0] || 1));
+  const t = [s[0]];
+  for (let i = 1; i < n - 1; i++) t.push(s[i - 1] * s[i] <= 0 ? 0 : (s[i - 1] + s[i]) / 2);
+  t.push(s[n - 2]);
+  for (let i = 0; i < n - 1; i++) {
+    if (s[i] === 0) { t[i] = 0; t[i + 1] = 0; continue; }
+    const a = t[i] / s[i];
+    const b = t[i + 1] / s[i];
+    const h = a * a + b * b;
+    if (h > 9) { const k = 3 / Math.sqrt(h); t[i] = k * a * s[i]; t[i + 1] = k * b * s[i]; }
+  }
+  let d = `M${pts[0][0].toFixed(1)},${pts[0][1].toFixed(1)}`;
+  for (let i = 0; i < n - 1; i++) {
+    const [x0, y0] = pts[i];
+    const [x1, y1] = pts[i + 1];
+    const dx = (x1 - x0) / 3;
+    d += `C${(x0 + dx).toFixed(1)},${(y0 + t[i] * dx).toFixed(1)} ${(x1 - dx).toFixed(1)},${(y1 - t[i + 1] * dx).toFixed(1)} ${x1.toFixed(1)},${y1.toFixed(1)}`;
+  }
+  return d;
+}
+
+const stop = (o, v, op = 1) => `<stop offset="${o}" style="stop-color:var(${v});stop-opacity:${op}"/>`;
+
+// Ring gauge (a donut showing a share, 0 to 1). `text` is shown in the middle.
+export function ringGauge({ value, text, size = 84, variant = 'glow' }) {
+  const id = nextId();
+  const v = Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
+  const r = size / 2 - 8;
+  const c = 2 * Math.PI * r;
+  const defs = `<defs><linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="0" y1="${size}" x2="${size}" y2="0">${stop(0, '--s1')}${stop(1, '--s1b')}</linearGradient></defs>`;
+  return `<svg class="ring v-${variant}" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" role="img" aria-label="${esc(text)}">${defs}
+    <circle class="ring-track" cx="${size / 2}" cy="${size / 2}" r="${r}"/>
+    <circle class="ring-val" cx="${size / 2}" cy="${size / 2}" r="${r}" style="stroke:url(#${id})" stroke-dasharray="${(c * v).toFixed(1)} ${c.toFixed(1)}" transform="rotate(-90 ${size / 2} ${size / 2})"/>
+    <text class="ring-text" x="50%" y="50%" text-anchor="middle" dominant-baseline="central">${esc(text)}</text></svg>`;
+}
+
 // Grouped columns. months: [{ label, title, values: [..one per series] }] (values in minor units)
-export function columnChart({ width, height = 240, months, series, fmtMoney, ariaLabel }) {
+export function columnChart({ width, height = 240, months, series, fmtMoney, ariaLabel, variant = 'classic' }) {
+  const id = nextId();
   const max = Math.max(0, ...months.flatMap((m) => m.values)) / 100;
   const { ticks, hi } = niceTicks(0, max || 1, 4);
   const fmt = axisFormatter(hi);
@@ -72,7 +118,8 @@ export function columnChart({ width, height = 240, months, series, fmtMoney, ari
   const { y, grid } = frame(width, height, ticks, hi, 0, left, top, pw, ph, fmt);
   const k = series.length;
   const gap = 2;
-  const barW = Math.min(24, Math.max(4, (slot * 0.72 - gap * (k - 1)) / k));
+  const maxBar = variant === 'glow' ? 12 : variant === 'smooth' ? 18 : 24;
+  const barW = Math.min(maxBar, Math.max(4, (slot * 0.72 - gap * (k - 1)) / k));
   const groupW = barW * k + gap * (k - 1);
 
   const tips = [];
@@ -83,19 +130,24 @@ export function columnChart({ width, height = 240, months, series, fmtMoney, ari
     m.values.forEach((v, j) => {
       if (v <= 0) return;
       const h = Math.max(2, (v / 100 / hi) * ph);
-      g += `<path class="bar ${series[j].cls}" d="${topRounded(gx + j * (barW + gap), top + ph - h, barW, h, 4)}"/>`;
+      const fill = variant === 'glow' ? ` style="fill:url(#${id}${j})"` : '';
+      g += `<path class="bar ${series[j].cls}"${fill} d="${topRounded(gx + j * (barW + gap), top + ph - h, barW, h, variant === 'classic' ? 4 : barW / 2)}"/>`;
     });
     const label = `${m.title}: ${series.map((s, j) => `${s.name} ${fmtMoney(m.values[j])}`).join(', ')}`;
     tips.push({ title: m.title, rows: series.map((s, j) => ({ cls: s.cls, name: s.name, value: fmtMoney(m.values[j]) })) });
     bars += `<g class="grp">${g}<rect class="hit" data-i="${i}" tabindex="0" role="img" aria-label="${esc(label)}" x="${(left + i * slot).toFixed(1)}" y="${top}" width="${slot.toFixed(1)}" height="${ph}"/></g>`;
   });
 
-  const html = `<svg class="chart-svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="group" aria-label="${esc(ariaLabel)}">${grid}${bars}${xLabels(months.map((m) => m.label), left, slot, height)}</svg>`;
+  const defs = variant === 'glow'
+    ? `<defs>${series.map((s, j) => `<linearGradient id="${id}${j}" gradientUnits="userSpaceOnUse" x1="0" y1="${top + ph}" x2="0" y2="${top}">${stop(0, `--${s.cls}`)}${stop(1, `--${s.cls}b`)}</linearGradient>`).join('')}</defs>`
+    : '';
+  const html = `<svg class="chart-svg v-${variant}" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="group" aria-label="${esc(ariaLabel)}">${defs}${grid}${bars}${xLabels(months.map((m) => m.label), left, slot, height)}</svg>`;
   return { html, tips };
 }
 
 // One line (running balance). months: [{ label, title, value }] (minor units). May go negative.
-export function lineChart({ width, height = 240, months, name, fmtMoney, ariaLabel }) {
+export function lineChart({ width, height = 240, months, name, fmtMoney, ariaLabel, variant = 'classic' }) {
+  const id = nextId();
   const vals = months.map((m) => m.value / 100);
   const { ticks, hi, lo } = niceTicks(Math.min(0, ...vals), Math.max(0, ...vals), 4);
   const fmt = axisFormatter(Math.max(Math.abs(hi), Math.abs(lo)));
@@ -110,9 +162,15 @@ export function lineChart({ width, height = 240, months, name, fmtMoney, ariaLab
   const px = (i) => left + (i + 0.5) * slot;
   const pts = months.map((m, i) => [px(i), y(m.value / 100)]);
   const y0 = y(0);
-  const line = pts.map(([x, yy], i) => `${i ? 'L' : 'M'}${x.toFixed(1)},${yy.toFixed(1)}`).join('');
+  const line = variant === 'classic' ? pts.map(([x, yy], i) => `${i ? 'L' : 'M'}${x.toFixed(1)},${yy.toFixed(1)}`).join('') : smoothPath(pts);
   const area = `${line}L${pts[n - 1][0].toFixed(1)},${y0.toFixed(1)}L${pts[0][0].toFixed(1)},${y0.toFixed(1)}Z`;
 
+  const glow = variant === 'glow';
+  const defs = glow
+    ? `<defs><linearGradient id="${id}a" gradientUnits="userSpaceOnUse" x1="0" y1="${top}" x2="0" y2="${top + ph}">${stop(0, '--s1', 0.5)}${stop(1, '--s1', 0)}</linearGradient><linearGradient id="${id}l" gradientUnits="userSpaceOnUse" x1="${left}" y1="0" x2="${left + pw}" y2="0">${stop(0, '--s1')}${stop(1, '--s1b')}</linearGradient></defs>`
+    : '';
+  const areaFill = glow ? ` style="fill:url(#${id}a);fill-opacity:1"` : '';
+  const lineStroke = glow ? ` style="stroke:url(#${id}l)"` : '';
   const tips = [];
   let hits = '';
   months.forEach((m, i) => {
@@ -125,7 +183,7 @@ export function lineChart({ width, height = 240, months, name, fmtMoney, ariaLab
   const below = ly < top + 8;
   const endLabel = `<text class="endlabel" x="${lx.toFixed(1)}" y="${(below ? ly + 20 : ly - 10).toFixed(1)}" text-anchor="end">${esc(fmtMoney(months[n - 1].value))}</text>`;
 
-  const html = `<svg class="chart-svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="group" aria-label="${esc(ariaLabel)}">${grid}<path class="area s1" d="${area}"/><path class="line s1" d="${line}"/>${dots}${endLabel}${xLabels(months.map((m) => m.label), left, slot, height)}${hits}</svg>`;
+  const html = `<svg class="chart-svg v-${variant}" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="group" aria-label="${esc(ariaLabel)}">${defs}${grid}<path class="area s1"${areaFill} d="${area}"/><path class="line s1"${lineStroke} d="${line}"/>${dots}${endLabel}${xLabels(months.map((m) => m.label), left, slot, height)}${hits}</svg>`;
   return { html, tips };
 }
 

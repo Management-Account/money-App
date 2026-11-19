@@ -9,3 +9,12 @@ export const THEMES = [
 export const DEFAULT_THEME = 'neon';
 export const isTheme = (id) => THEMES.some((t) => t.id === id);
 export const themeMeta = (id) => ({ neon: '#0a0f2c', soft: '#e9eef4', ocean: '#04141c', sunset: '#1a0d17' })[id] || '#0a0f2c';
+
+// Graph styles. Colours follow the active theme (see .gs-* rules in styles.css).
+export const GRAPH_STYLES = [
+  { id: 'classic', name: 'Classic', blurb: 'Flat columns and straight lines.' },
+  { id: 'smooth', name: 'Smooth', blurb: 'Rounded columns and flowing curves.' },
+  { id: 'glow', name: 'Neon glow', blurb: 'Glowing gradient columns, wave lines and ring gauges.' },
+];
+export const DEFAULT_GRAPH = 'classic';
+export const isGraph = (id) => GRAPH_STYLES.some((g) => g.id === id);

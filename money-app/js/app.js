@@ -1,6 +1,6 @@
 import { pickerHTML, mountPicker } from './picker.js';
 import { EMOJI_GROUPS, categoryEmoji, suggestEmoji, validEmoji } from './emoji.js';
-import { THEMES, DEFAULT_THEME, isTheme, themeMeta } from './themes.js';
+import { THEMES, DEFAULT_THEME, isTheme, themeMeta, GRAPH_STYLES, DEFAULT_GRAPH, isGraph } from './themes.js';
 import { institutionOf, badgeHTML } from './institutions.js';
 import {
   SCHEMA_VERSION, uid, todayStr, monthKey, shiftMonth, toMinor, fromMinor, formatMoney, createState, live, upsert, remove,
@@ -8,7 +8,7 @@ import {
   toMinorSigned, liveAccounts, fallbackAccountId, accountIdOf, accountSummaries, removeAccount,
 } from './store.js';
 import { getCurrencies } from './currencies.js';
-import { columnChart, lineChart, rankedBars, attachTips, hideTip } from './charts.js';
+import { columnChart, lineChart, rankedBars, ringGauge, attachTips, hideTip } from './charts.js';
 import {
   cloudEnabled, AuthError, NetworkError, getSession, getOwner, setOwner, signUp, signIn, signOut, setPassword, syncNow,
   USERNAME_RE, normalizeUsername, displayName,
@@ -522,6 +522,10 @@ function viewInsights() {
   const pct = d.rate === null ? '–' : `${Math.round(d.rate * 100)}%`;
   const tile = (label, value, sub, cls = '') =>
     `<div class="card tile"><div class="label">${label}</div><div class="value ${cls}">${esc(value)}</div><div class="sub">${esc(sub)}</div></div>`;
+  const g = graphStyle();
+  const ringTile = g !== 'classic' && d.rate !== null
+    ? `<div class="card tile ringtile gs-${g}"><div><div class="label">Savings rate</div><div class="sub">Share of income kept</div></div>${ringGauge({ value: d.rate, text: pct, size: 66, variant: g })}</div>`
+    : tile('Savings rate', pct, d.rate === null ? 'No income yet' : 'Share of income kept');
   const avg = d.units > 1 ? `About ${money(Math.round(d.expense / d.units))} a ${d.unit}` : d.per.name;
   const colHead = d.unit === 'day' ? 'Day' : 'Month';
   const balHint = d.unit === 'day' ? 'at the end of each day' : 'at the end of each month';
@@ -530,21 +534,21 @@ function viewInsights() {
       ${tile('Income', moneyTile(d.income), d.per.name, 'income')}
       ${tile('Expenses', moneyTile(d.expense), avg, 'expense')}
       ${tile('Net', moneyTile(d.net), d.net >= 0 ? 'You saved this much' : 'You spent more than you earned', d.net < 0 ? 'expense' : '')}
-      ${tile('Savings rate', pct, d.rate === null ? 'No income yet' : 'Share of income kept')}
+      ${ringTile}
     </div>
-    <section class="card chart-card">
+    <section class="card chart-card gs-${g}">
       <h2>Income vs expenses</h2>
       <div class="legend"><span class="lg"><i class="s1"></i>Income</span><span class="lg"><i class="s2"></i>Expenses</span></div>
       <div class="chart" id="ch-monthly"></div>
       ${tableView([colHead, 'Income', 'Expenses', 'Net'], d.rows.map((r, i) => [d.labels[i].title, money(r.income), money(r.expense), money(r.net)]))}
     </section>
-    ${d.rows.length > 1 ? `<section class="card chart-card">
+    ${d.rows.length > 1 ? `<section class="card chart-card gs-${g}">
       <h2>Running balance</h2>
       <p class="hint" style="margin:-4px 0 6px">Everything you have earned minus everything you have spent, ${balHint}.</p>
       <div class="chart" id="ch-balance"></div>
       ${tableView([colHead, 'Balance'], d.rows.map((r, i) => [d.labels[i].title, money(d.balance[i])]))}
     </section>` : ''}
-    <section class="card chart-card">
+    <section class="card chart-card gs-${g}">
       <h2>Where the money goes</h2>
       ${d.cats.length ? '<div class="chart" id="ch-cats"></div>' : '<div class="empty">No spending in this period.</div>'}
       ${d.cats.length ? tableView(['Category', 'Spent', 'Share'], d.cats.map((c) => [c.name, money(c.total), `${Math.round(c.share * 100)}%`])) : ''}
@@ -572,6 +576,7 @@ function drawInsights() {
       series: [{ name: 'Income', cls: 's1' }, { name: 'Expenses', cls: 's2' }],
       fmtMoney: money,
       ariaLabel: 'Income and expenses over time',
+      variant: graphStyle(),
     }),
   );
   mount('#ch-balance', (width) =>
@@ -581,6 +586,7 @@ function drawInsights() {
       name: 'Balance',
       fmtMoney: money,
       ariaLabel: 'Running balance over time',
+      variant: graphStyle(),
     }),
   );
   mount('#ch-cats', () => rankedBars({ rows: d.cats, fmtMoney: money }));
@@ -637,9 +643,13 @@ function viewAuth() {
   </div>`;
 }
 
+const graphStyle = () => (isGraph(state.settings.graph) ? state.settings.graph : DEFAULT_GRAPH);
+
 function applyTheme() {
   const id = isTheme(state.settings.theme) ? state.settings.theme : DEFAULT_THEME;
   document.documentElement.dataset.theme = id;
+  const tip = document.querySelector('#tip');
+  if (tip) tip.className = `tip gs-${graphStyle()}`;
   document.querySelector('meta[name="theme-color"]')?.setAttribute('content', themeMeta(id));
 }
 
@@ -654,7 +664,30 @@ function viewThemes() {
       </span>
       <span class="th-name">${esc(t.name)}${t.id === cur ? ' <span class="th-on">✓ In use</span>' : ''}</span>
       <span class="th-blurb">${esc(t.blurb)}</span>
+    </button>`).join('')}</div>
+    <h2>Graph style</h2>
+    <p class="hint">How the charts on the Insights tab look. Colours follow the theme you picked.</p>
+    <div class="graphs">${GRAPH_STYLES.map((g) => `<button class="graphopt gs-${g.id} ${g.id === graphStyle() ? 'on' : ''}" data-action="graph" data-id="${g.id}" aria-pressed="${g.id === graphStyle()}">
+      <span class="gprev" data-prev="${g.id}" aria-hidden="true"></span>
+      <span class="th-name">${esc(g.name)}${g.id === graphStyle() ? ' <span class="th-on">✓ In use</span>' : ''}</span>
+      <span class="th-blurb">${esc(g.blurb)}</span>
     </button>`).join('')}</div>`;
+}
+
+// Small live samples of each graph style, drawn with the real chart code.
+function drawGraphPreviews() {
+  if (ui.tab !== 'themes') return;
+  const labels = ['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((l, i) => ({ label: l, title: String(i) }));
+  const inc = [40, 55, 30, 80, 62, 90, 70];
+  const exp = [25, 35, 50, 30, 45, 40, 55];
+  document.querySelectorAll('[data-prev]').forEach((el) => {
+    const variant = el.dataset.prev;
+    const w = el.clientWidth;
+    if (!w) return;
+    const col = columnChart({ width: w, height: 110, months: labels.map((l, i) => ({ ...l, values: [inc[i] * 100, exp[i] * 100] })), series: [{ name: 'Income', cls: 's1' }, { name: 'Expenses', cls: 's2' }], fmtMoney: () => '', ariaLabel: 'Sample', variant });
+    const line = lineChart({ width: w, height: 90, months: labels.map((l, i) => ({ ...l, value: (inc[i] - exp[i] + 30) * 100 })), name: 'Sample', fmtMoney: () => '', ariaLabel: 'Sample', variant });
+    el.innerHTML = (col.html + line.html).replace(/<rect class="hit"[^>]*\/>/g, '').replace(/<text class="endlabel"[^<]*<\/text>/g, '');
+  });
 }
 
 function render() {
@@ -670,6 +703,7 @@ function render() {
   const views = { home: viewHome, transactions: viewTransactions, wallets: viewWallets, insights: viewInsights, categories: viewCategories, themes: viewThemes, settings: viewSettings };
   $('#main').innerHTML = views[ui.tab]();
   drawInsights();
+  drawGraphPreviews();
 }
 
 // ---------- dialogs ----------
@@ -995,6 +1029,12 @@ document.addEventListener('click', async (e) => {
       if (isTheme(id) && id !== state.settings.theme) {
         setState({ ...state, settings: { ...state.settings, theme: id, updatedAt: Date.now() } });
         toast(`${THEMES.find((t) => t.id === id).name} theme on`);
+      }
+      break;
+    case 'graph':
+      if (isGraph(id) && id !== state.settings.graph) {
+        setState({ ...state, settings: { ...state.settings, graph: id, updatedAt: Date.now() } });
+        toast(`${GRAPH_STYLES.find((g) => g.id === id).name} graphs on`);
       }
       break;
     case 'add-cat':

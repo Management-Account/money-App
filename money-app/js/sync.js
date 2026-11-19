@@ -63,7 +63,7 @@ async function http(path, { method = 'GET', body, token, headers = {} } = {}) {
   }
   if (!res.ok) {
     let msg = data?.msg || data?.error_description || data?.message || data?.error || `Request failed (${res.status})`;
-    if (['PGRST205', '42P01', 'PGRST204', '42703'].includes(data?.code)) {
+    if (['PGRST205', '42P01', 'PGRST204', '42703', '42P10', '42501'].includes(data?.code)) {
       msg += ' (Run the latest supabase/schema.sql in your Supabase SQL Editor. It is safe to run again on an existing project.)';
     }
     const err = new Error(msg);
@@ -235,8 +235,10 @@ const toTx = (t) => ({
 });
 
 async function push(table, rows) {
+  // Rows are keyed per user (user_id, id): built-in categories share ids between users.
+  const target = table === 'settings' ? table : `${table}?on_conflict=user_id,id`;
   for (let i = 0; i < rows.length; i += 500) {
-    await rest(table, {
+    await rest(target, {
       method: 'POST',
       body: rows.slice(i, i + 500),
       headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
@@ -252,7 +254,7 @@ export async function syncNow(state) {
     categories: rc.map(fromCat),
     accounts: ra.map(fromAcc),
     transactions: rt.map(fromTx),
-    settings: rs[0] ? { currency: rs[0].currency, theme: rs[0].theme || undefined, updatedAt: Number(rs[0].updated_at) || 0 } : undefined,
+    settings: rs[0] ? { currency: rs[0].currency, theme: rs[0].theme || undefined, graph: rs[0].graph || undefined, updatedAt: Number(rs[0].updated_at) || 0 } : undefined,
   };
   const merged = mergeState(state, remote);
 
@@ -264,7 +266,7 @@ export async function syncNow(state) {
   await push('accounts', newer(merged.accounts, remote.accounts).map(toAcc));
   await push('transactions', newer(merged.transactions, remote.transactions).map(toTx));
   if (merged.settings.updatedAt > (remote.settings?.updatedAt ?? 0)) {
-    await push('settings', [{ currency: merged.settings.currency, theme: merged.settings.theme || 'neon', updated_at: merged.settings.updatedAt }]);
+    await push('settings', [{ currency: merged.settings.currency, theme: merged.settings.theme || 'neon', graph: merged.settings.graph || 'classic', updated_at: merged.settings.updatedAt }]);
   }
   return merged;
 }

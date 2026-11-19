@@ -18,6 +18,7 @@ on any device that opens the site. No build step: plain HTML, CSS and JavaScript
 - **Insights tab**: income vs expenses, running balance, and spending by category for Day (today), Week (7 days), 1 month (30 days), 3 / 6 / 12 months, or a custom date range (hover or tap a chart for exact values; every chart has a "View as table" twin)
 - **All world currencies**: pick any of 160+ ISO currencies in Settings (one currency per account)
 - **Themes tab**: Neon Night (default), Soft Light, Ocean and Sunset. The choice is saved to your account and used on every device
+- **Graph styles** (Themes tab): Classic, Smooth, and Neon glow (glowing gradient columns, wave lines, ring gauge). Colours follow the active theme and are saved to your account
 - **Category emojis**: every category has an emoji (built-in ones come pre-set, new ones are suggested from the name); pick one from the grid or type/paste your own
 - Works offline
 
@@ -33,7 +34,7 @@ npm test         # unit tests for the data logic
 2. **SQL Editor → New query**: paste the contents of `supabase/schema.sql` and **Run**. This creates the tables and the
    row-level security rules (each user can only read/write their own rows).
    **Updating from an earlier version? Run the new `schema.sql` again before using the new app.** It is safe to re-run: it adds
-   the accounts table, the account column and the new bank, logo, category emoji and theme columns, and keeps all your data. Until you do, sync shows a "Sync problem" message (your data stays safe on the device).
+   the accounts table, the account column and the new bank, logo, category emoji, theme and graph-style columns, and keeps all your data. Until you do, sync shows a "Sync problem" message (your data stays safe on the device).
 3. **Project Settings → API**: copy the **Project URL** and the **anon / publishable** key into `js/config.js`.
    (The anon key is meant to be public. Never use the `service_role` / secret key in this app.)
 4. **Authentication → Providers → Email**: turn **Confirm email OFF** (and leave the Email provider enabled).
@@ -47,7 +48,7 @@ npm test         # unit tests for the data logic
 2. On vercel.com: **Add New → Project**, import the repo. Framework preset: **Other**. Leave build command and output directory empty.
 3. Deploy and open the URL.
 
-After every deploy that changes files, bump `CACHE` in `sw.js` (e.g. `pocket-ledger-v10`) so browsers pick up the update.
+After every deploy that changes files, bump `CACHE` in `sw.js` (e.g. `pocket-ledger-v12`) so browsers pick up the update.
 
 ## How sync works
 - The app always reads and writes local data first, so it is fast and works offline.
@@ -79,6 +80,8 @@ After every deploy that changes files, bump `CACHE` in `sw.js` (e.g. `pocket-led
 Accounts (table `accounts`, with an optional `institution`), categories and transactions all follow the same rule. Every record has a UUID `id`, an `updatedAt` timestamp and an optional `deleted` flag (soft delete).
 Money is stored as integer minor units (cents/piasters). This makes cloud sync safe: `mergeState()` in
 `store.js` already merges two devices' data with last-write-wins per record.
+
+- Built-in categories and the default account have the same ids for every user, so the tables are keyed by `(user_id, id)`. If sync ever says "violates row-level security policy", run the latest `schema.sql` (it migrates the keys) and update the app files.
 
 ## Known limits
 - **There is no password recovery**: with no email on file, a forgotten password cannot be reset by the user. (As the project owner you can set a new password for a user in the Supabase dashboard under Authentication → Users.) Signed-in users can change their password in Settings.
