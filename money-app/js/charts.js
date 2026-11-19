@@ -226,10 +226,10 @@ export function rankedBars({ rows, fmtMoney }) {
     .map((r, i) => {
       const value = fmtMoney(r.total);
       const pct = `${Math.round(r.share * 100)}%`;
-      tips.push({ title: r.name, rows: [{ cls: r.other ? 'other' : 's1', name: `${pct} of spending`, value }] });
+      tips.push({ title: r.name, rows: [{ cls: r.other ? 'other' : 's1', color: r.color, name: `${pct} of spending`, value }] });
       return `<div class="rb" data-i="${i}" tabindex="0" role="img" aria-label="${esc(`${r.name}: ${value}, ${pct}`)}">
         <span class="rb-name">${esc(r.name)}</span>
-        <span class="rb-track"><span class="rb-bar ${r.other ? 'other' : 's1'}" style="--p:${(r.total / max).toFixed(4)}"></span><span class="rb-val">${esc(value)}</span></span>
+        <span class="rb-track"><span class="rb-bar ${r.other ? 'other' : r.color ? 'cc' : 's1'}" style="--p:${(r.total / max).toFixed(4)}${r.color ? `;--c:${esc(r.color)}` : ''}"></span><span class="rb-val">${esc(value)}</span></span>
       </div>`;
     })
     .join('');
@@ -267,6 +267,7 @@ function show(tip, x, y) {
     row.className = 'tip-row';
     const key = document.createElement('span');
     key.className = `tip-key ${r.cls || ''}`;
+    if (r.color) key.style.background = r.color;
     const val = document.createElement('strong');
     val.textContent = r.value;
     const nm = document.createElement('span');

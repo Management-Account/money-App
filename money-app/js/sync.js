@@ -215,11 +215,11 @@ async function fetchAll(table) {
 }
 
 const fromCat = (r) => ({
-  id: r.id, name: r.name, type: r.type, budget: Number(r.budget) || 0, emoji: r.emoji || '', updatedAt: Number(r.updated_at) || 0,
+  id: r.id, name: r.name, type: r.type, budget: Number(r.budget) || 0, emoji: r.emoji || '', color: r.color || '', updatedAt: Number(r.updated_at) || 0,
   ...(r.deleted ? { deleted: true } : {}),
 });
 const toCat = (c) => ({
-  id: c.id, name: c.name, type: c.type, budget: c.budget || 0, emoji: c.emoji || '', updated_at: c.updatedAt || 0, deleted: !!c.deleted,
+  id: c.id, name: c.name, type: c.type, budget: c.budget || 0, emoji: c.emoji || '', color: c.color || '', updated_at: c.updatedAt || 0, deleted: !!c.deleted,
 });
 const fromAcc = (r) => ({
   id: r.id, name: r.name, opening: Number(r.opening) || 0, institution: r.institution || '', logo: r.logo || '', updatedAt: Number(r.updated_at) || 0, ...(r.deleted ? { deleted: true } : {}),

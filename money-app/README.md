@@ -19,6 +19,8 @@ on any device that opens the site. No build step: plain HTML, CSS and JavaScript
 - **All world currencies**: pick any of 160+ ISO currencies in Settings (one currency per account)
 - **Themes tab**: Neon Night (default), Soft Light, Ocean and Sunset. The choice is saved to your account and used on every device
 - **Graph styles** (Themes tab): Classic, Smooth, Neon glow (glowing gradient columns, ring gauge) and Waves (overlapping glowing waves). Colours follow the active theme and are saved to your account
+- **Category colours**: every category has a colour (pick from a checked palette or any colour); its bars in the Home and Insights charts use it
+- **Logo editor**: uploading a picture for an account opens a crop editor (drag to choose the part, zoom with the slider, wheel or pinch); the saved logo always fills the badge with no empty space
 - **Category emojis**: every category has an emoji (built-in ones come pre-set, new ones are suggested from the name); pick one from the grid or type/paste your own
 - Works offline
 
@@ -34,7 +36,7 @@ npm test         # unit tests for the data logic
 2. **SQL Editor → New query**: paste the contents of `supabase/schema.sql` and **Run**. This creates the tables and the
    row-level security rules (each user can only read/write their own rows).
    **Updating from an earlier version? Run the new `schema.sql` again before using the new app.** It is safe to re-run: it adds
-   the accounts table, the account column and the new bank, logo, category emoji, theme and graph-style columns, and keeps all your data. Until you do, sync shows a "Sync problem" message (your data stays safe on the device).
+   the accounts table, the account column and the new bank, logo, category emoji, category colour, theme and graph-style columns, and keeps all your data. Until you do, sync shows a "Sync problem" message (your data stays safe on the device).
 3. **Project Settings → API**: copy the **Project URL** and the **anon / publishable** key into `js/config.js`.
    (The anon key is meant to be public. Never use the `service_role` / secret key in this app.)
 4. **Authentication → Providers → Email**: turn **Confirm email OFF** (and leave the Email provider enabled).
@@ -48,7 +50,7 @@ npm test         # unit tests for the data logic
 2. On vercel.com: **Add New → Project**, import the repo. Framework preset: **Other**. Leave build command and output directory empty.
 3. Deploy and open the URL.
 
-After every deploy that changes files, bump `CACHE` in `sw.js` (e.g. `pocket-ledger-v13`) so browsers pick up the update.
+After every deploy that changes files, bump `CACHE` in `sw.js` (e.g. `pocket-ledger-v14`) so browsers pick up the update.
 
 ## How sync works
 - The app always reads and writes local data first, so it is fast and works offline.
@@ -67,6 +69,7 @@ After every deploy that changes files, bump `CACHE` in `sw.js` (e.g. `pocket-led
 | `js/currencies.js` | List of all ISO 4217 currencies |
 | `js/institutions.js` | Catalog of Egyptian banks, wallets and cards, search, badges |
 | `js/picker.js` | The searchable bank dropdown |
+| `js/colors.js` | Category colour palette, defaults and helpers |
 | `js/emoji.js` | Category emojis: picker choices, defaults, suggestions |
 | `js/themes.js` | Theme list; the colours are in `styles.css` (`:root[data-theme=...]`) |
 | `js/logos.js`, `logos/` | Optional real logo files (see below) |

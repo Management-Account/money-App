@@ -1,4 +1,5 @@
 import { validEmoji } from './emoji.js';
+import { validColor } from './colors.js';
 import { isTheme, DEFAULT_THEME, isGraph, DEFAULT_GRAPH } from './themes.js';
 // Pure data logic for the money app: no DOM, no storage, so it can be unit-tested
 // in Node and reused later by a sync backend.
@@ -189,6 +190,7 @@ export function sanitizeState(obj) {
       type: c.type,
       budget: Number.isSafeInteger(c.budget) && c.budget > 0 ? c.budget : 0,
       emoji: validEmoji(c.emoji),
+      color: validColor(c.color),
       updatedAt: Number.isFinite(c.updatedAt) ? c.updatedAt : 0,
       ...(c.deleted ? { deleted: true } : {}),
     }));

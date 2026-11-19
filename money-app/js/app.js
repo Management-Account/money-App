@@ -1,5 +1,6 @@
 import { pickerHTML, mountPicker } from './picker.js';
 import { EMOJI_GROUPS, categoryEmoji, suggestEmoji, validEmoji } from './emoji.js';
+import { categoryColor, nextColor, validColor, PALETTE } from './colors.js';
 import { THEMES, DEFAULT_THEME, isTheme, themeMeta, GRAPH_STYLES, DEFAULT_GRAPH, isGraph } from './themes.js';
 import { institutionOf, badgeHTML } from './institutions.js';
 import {
@@ -291,7 +292,7 @@ function barsHTML(s) {
       const width = Math.min(100, Math.round(pct * 100));
       return `<div class="bar-row">
         <div class="bar-head"><span>${esc(r.name)}</span><span class="muted">${esc(note)}</span></div>
-        <div class="bar ${cls}" role="img" aria-label="${esc(r.name)} ${width}%"><span style="width:${width}%"></span></div>
+        <div class="bar ${cls}" style="--c:${categoryColor(catById(r.id))}" role="img" aria-label="${esc(r.name)} ${width}%"><span style="width:${width}%"></span></div>
       </div>`;
     })
     .join('');
@@ -381,7 +382,7 @@ function viewCategories() {
       cats
         .map(
           (c) => `<button class="row" data-action="edit-cat" data-id="${esc(c.id)}">
-            <span class="t">${esc(categoryEmoji(c))} ${esc(c.name)}</span>
+            <span class="t"><i class="cdot" style="background:${categoryColor(c)}"></i>${esc(categoryEmoji(c))} ${esc(c.name)}</span>
             <span class="sub">${type === 'expense' ? (c.budget > 0 ? 'Budget ' + esc(money(c.budget)) : 'No budget') : ''}</span>
           </button>`,
         )
@@ -478,7 +479,7 @@ function insightsData() {
   return {
     per, unit, rows, labels, income, expense, net: income - expense, balance, units,
     rate: income > 0 ? (income - expense) / income : null,
-    cats: top.map((c) => ({ ...c, name: c.other ? `📦 ${c.name}` : catLabel(c.id), share: expense ? c.total / expense : 0 })),
+    cats: top.map((c) => ({ ...c, color: c.other ? '' : categoryColor(catById(c.id)), name: c.other ? `📦 ${c.name}` : catLabel(c.id), share: expense ? c.total / expense : 0 })),
     hasData: income > 0 || expense > 0,
   };
 }
@@ -810,23 +811,91 @@ function openTxDialog(id) {
   );
 }
 
-// Shrinks a picked image to a 96px square (centre-cropped) and returns a small data URL.
-async function imageToLogo(file) {
-  const url = URL.createObjectURL(file);
-  try {
-    const img = await new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = no; i.src = url; });
-    const side = Math.min(img.naturalWidth, img.naturalHeight);
-    if (!side) throw new Error('empty');
-    const c = document.createElement('canvas');
-    c.width = c.height = 96;
-    c.getContext('2d').drawImage(img, (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2, side, side, 0, 0, 96, 96);
-    let out = c.toDataURL('image/png');
-    if (!validLogo(out)) out = c.toDataURL('image/jpeg', 0.85);
-    if (!validLogo(out)) throw new Error('too big');
-    return out;
-  } finally {
-    URL.revokeObjectURL(url);
-  }
+// Crop editor for logos: drag to move, slider / wheel / pinch to zoom. The image always covers the square,
+// so the saved logo never has empty space. Resolves to a small data URL, or null if cancelled.
+function cropLogo(file, host) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('bad image')); };
+    img.onload = () => {
+      const V = 240;
+      const w = img.naturalWidth;
+      const h = img.naturalHeight;
+      if (!w || !h) { URL.revokeObjectURL(url); return reject(new Error('empty')); }
+      host.hidden = false;
+      host.innerHTML = `<canvas width="${V}" height="${V}" aria-label="Logo preview. Drag to move the picture."></canvas>
+        <div class="zoom"><button type="button" class="btn" data-z="-1" aria-label="Zoom out">−</button>
+          <input type="range" min="1" max="5" step="0.01" value="1" aria-label="Zoom"><button type="button" class="btn" data-z="1" aria-label="Zoom in">+</button></div>
+        <span class="hint">Drag to choose the part you want, zoom with the slider or mouse wheel.</span>
+        <div class="btns"><button type="button" class="btn" data-x="cancel">Cancel</button><button type="button" class="btn primary" data-x="ok">Use this picture</button></div>`;
+      const cv = host.querySelector('canvas');
+      const ctx = cv.getContext('2d');
+      const range = host.querySelector('input[type=range]');
+      const base = V / Math.min(w, h); // scale at which the image just covers the square
+      let zoom = 1;
+      let cx = w / 2;
+      let cy = h / 2;
+      const clamp = () => {
+        const half = V / (2 * base * zoom);
+        cx = Math.min(w - half, Math.max(half, cx));
+        cy = Math.min(h - half, Math.max(half, cy));
+      };
+      const draw = () => {
+        clamp();
+        const side = V / (base * zoom);
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(0, 0, V, V);
+        ctx.drawImage(img, cx - side / 2, cy - side / 2, side, side, 0, 0, V, V);
+      };
+      const setZoom = (z) => { zoom = Math.min(5, Math.max(1, z)); range.value = zoom; draw(); };
+      draw();
+      range.addEventListener('input', () => setZoom(Number(range.value)));
+      host.querySelectorAll('[data-z]').forEach((b2) => b2.addEventListener('click', () => setZoom(zoom + Number(b2.dataset.z) * 0.4)));
+      cv.addEventListener('wheel', (e) => { e.preventDefault(); setZoom(zoom * (e.deltaY < 0 ? 1.08 : 1 / 1.08)); }, { passive: false });
+      const pts = new Map();
+      let pinch = 0;
+      cv.addEventListener('pointerdown', (e) => { cv.setPointerCapture(e.pointerId); pts.set(e.pointerId, [e.clientX, e.clientY]); pinch = 0; });
+      cv.addEventListener('pointermove', (e) => {
+        const prev = pts.get(e.pointerId);
+        if (!prev) return;
+        const now = [e.clientX, e.clientY];
+        pts.set(e.pointerId, now);
+        if (pts.size === 2) {
+          const [p1, p2] = [...pts.values()];
+          const d = Math.hypot(p1[0] - p2[0], p1[1] - p2[1]);
+          if (pinch) setZoom(zoom * (d / pinch));
+          pinch = d;
+        } else if (pts.size === 1) {
+          const k = cv.getBoundingClientRect().width / V; // CSS pixels per canvas pixel
+          cx -= (now[0] - prev[0]) / (k * base * zoom);
+          cy -= (now[1] - prev[1]) / (k * base * zoom);
+          draw();
+        }
+      });
+      const up = (e) => { pts.delete(e.pointerId); pinch = 0; };
+      cv.addEventListener('pointerup', up);
+      cv.addEventListener('pointercancel', up);
+      const finish = (value) => { URL.revokeObjectURL(url); host.hidden = true; host.innerHTML = ''; resolve(value); };
+      host.querySelector('[data-x="cancel"]').addEventListener('click', () => finish(null));
+      host.querySelector('[data-x="ok"]').addEventListener('click', () => {
+        const side = V / (base * zoom);
+        let out = '';
+        for (const [size, type, q] of [[128, 'image/png'], [128, 'image/jpeg', 0.85], [96, 'image/jpeg', 0.8], [64, 'image/jpeg', 0.7]]) {
+          const c = document.createElement('canvas');
+          c.width = c.height = size;
+          const x = c.getContext('2d');
+          x.fillStyle = '#fff';
+          x.fillRect(0, 0, size, size);
+          x.drawImage(img, cx - side / 2, cy - side / 2, side, side, 0, 0, size, size);
+          out = validLogo(c.toDataURL(type, q));
+          if (out) break;
+        }
+        finish(out || null);
+      });
+    };
+    img.src = url;
+  });
 }
 
 function openWalletDialog(id) {
@@ -844,8 +913,9 @@ function openWalletDialog(id) {
           <button type="button" class="btn" id="logo-clear" hidden>Remove</button>
         </div>
         <input type="file" id="logo-file" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
+        <div class="cropper" id="cropper" hidden></div>
         <input type="hidden" name="logo" value="${esc(acc.logo || '')}">
-        <span class="hint">Optional. Pick any picture for this bank or account (it is shrunk to a small square).</span></div>
+        <span class="hint">Optional. Pick a picture, then drag and zoom to choose the part you want to show.</span></div>
       <div class="field"><label for="w-name">Account name (for example CIB Savings, Salary, Daily)</label>
         <input type="text" id="w-name" name="name" maxlength="60" autocomplete="off" value="${esc(acc.name)}"></div>
       <div class="field"><label for="w-open">Starting balance</label>
@@ -893,8 +963,9 @@ function openWalletDialog(id) {
           if (!f) return;
           const err = form.querySelector('.error');
           try {
-            logoEl.value = await imageToLogo(f);
             err.textContent = '';
+            const out = await cropLogo(f, form.querySelector('#cropper'));
+            if (out) logoEl.value = out;
           } catch {
             err.textContent = 'That file could not be read as a picture. Try a PNG or JPEG.';
           }
@@ -926,13 +997,19 @@ function openWalletDialog(id) {
 
 function openCatDialog(id) {
   const existing = id ? live(state.categories).find((c) => c.id === id) : null;
-  const cat = existing || { id: uid(), name: '', type: 'expense', budget: 0, emoji: '' };
+  const cat = existing || { id: uid(), name: '', type: 'expense', budget: 0, emoji: '', color: '' };
+  const startColor = existing ? categoryColor(existing) : nextColor(state.categories);
   const picked = existing ? categoryEmoji(existing) : '';
   openDialog(
     `<form>
       <h3>${existing ? 'Edit category' : 'New category'}</h3>
       <div class="field"><label for="c-name">Name</label>
         <input type="text" id="c-name" name="name" maxlength="60" autocomplete="off" value="${esc(cat.name)}"></div>
+      <div class="field color-field"><span class="lbl">Colour in graphs</span>
+        <div class="color-row" role="group" aria-label="Pick a colour">${PALETTE.map((c) => `<button type="button" class="sw" data-c="${c}" style="background:${c}" aria-label="${c}"></button>`).join('')}
+          <label class="sw own" title="Pick any colour"><input type="color" id="c-own" value="${startColor}" aria-label="Pick any colour"><span>+</span></label></div>
+        <input type="hidden" name="color" value="${esc(startColor)}">
+        <span class="hint">This category's bar in the charts uses this colour.</span></div>
       <div class="field emoji-field"><span class="lbl">Icon (emoji)</span>
         <div class="emoji-row"><span class="emoji-prev" id="e-prev" aria-live="polite">${esc(picked || '🏷️')}</span>
           <input type="text" id="e-own" maxlength="8" autocomplete="off" placeholder="Type or paste your own" aria-label="Type your own emoji">
@@ -962,6 +1039,18 @@ function openCatDialog(id) {
         const sync = () => (wrap.hidden = sel.value !== 'expense');
         sel.addEventListener('change', sync);
         sync();
+        const colHid = form.querySelector('input[name="color"]');
+        const colOwn = form.querySelector('#c-own');
+        const markColor = () => form.querySelectorAll('.sw[data-c]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.c === colHid.value)));
+        markColor();
+        form.querySelector('.color-row').addEventListener('click', (e) => {
+          const b = e.target.closest('.sw[data-c]');
+          if (!b) return;
+          colHid.value = b.dataset.c;
+          colOwn.value = b.dataset.c;
+          markColor();
+        });
+        colOwn.addEventListener('input', () => { colHid.value = colOwn.value; markColor(); });
         const hid = form.querySelector('input[name="emoji"]');
         const prev = form.querySelector('#e-prev');
         const own = form.querySelector('#e-own');
@@ -995,7 +1084,7 @@ function openCatDialog(id) {
         }
         const clash = live(state.categories).some((c) => c.id !== cat.id && c.type === type && c.name.toLowerCase() === name.toLowerCase());
         if (clash) return 'A category with that name already exists.';
-        setState({ ...state, categories: upsert(state.categories, { id: cat.id, name, type, budget, emoji: validEmoji(fd.get('emoji') || '') }) });
+        setState({ ...state, categories: upsert(state.categories, { id: cat.id, name, type, budget, emoji: validEmoji(fd.get('emoji') || ''), color: validColor(fd.get('color') || '') }) });
       },
       onDelete() {
         setState({ ...state, categories: remove(state.categories, cat.id) });

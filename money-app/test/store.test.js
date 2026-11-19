@@ -406,3 +406,21 @@ test('uploaded logos: only small image data URLs are kept, and they survive sani
   const acc = { id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', name: 'X', opening: 0, logo: ok, updatedAt: 1 };
   assert.equal(sanitizeState({ ...s, accounts: [...s.accounts, acc] }).accounts.find((a) => a.id === acc.id).logo, ok);
 });
+
+import { categoryColor, validColor, nextColor, PALETTE } from '../js/colors.js';
+test('category colours: valid hex only, built-in defaults, stable fallback, next unused', () => {
+  assert.equal(validColor('#AABBCC'), '#aabbcc');
+  assert.equal(validColor('red'), '');
+  assert.equal(validColor('#abc'), '');
+  assert.equal(categoryColor({ id: 'x', color: '#112233' }), '#112233');
+  const food = createState().categories.find((c) => c.name === 'Food');
+  assert.match(categoryColor(food), /^#[0-9a-f]{6}$/);
+  const odd = { id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', name: 'Odd' };
+  assert.equal(categoryColor(odd), categoryColor({ ...odd }));
+  assert.ok(PALETTE.includes(categoryColor(odd)));
+  const s = createState();
+  assert.ok(PALETTE.includes(nextColor(s.categories)) || /^#/.test(nextColor(s.categories)));
+  const clean = sanitizeState({ ...s, categories: [...s.categories, { id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', name: 'C', type: 'expense', color: '#123456', updatedAt: 1 }, { id: 'ffffffff-ffff-4fff-8fff-ffffffffffff', name: 'D', type: 'expense', color: 'javascript:1', updatedAt: 1 }] });
+  assert.equal(clean.categories.find((c) => c.name === 'C').color, '#123456');
+  assert.equal(clean.categories.find((c) => c.name === 'D').color, '');
+});
