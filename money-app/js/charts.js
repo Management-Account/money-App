@@ -122,6 +122,8 @@ export function columnChart({ width, height = 240, months, series, fmtMoney, ari
   const barW = Math.min(maxBar, Math.max(4, (slot * 0.72 - gap * (k - 1)) / k));
   const groupW = barW * k + gap * (k - 1);
 
+  if (variant === 'wave') return waveChart({ id, width, height, months, series, fmtMoney, ariaLabel, left, top, pw, ph, slot, hi, grid, y, xl: xLabels(months.map((m) => m.label), left, slot, height) });
+
   const tips = [];
   let bars = '';
   months.forEach((m, i) => {
@@ -145,6 +147,35 @@ export function columnChart({ width, height = 240, months, series, fmtMoney, ari
   return { html, tips };
 }
 
+// Layered smooth waves, one per series, overlapping like the reference dashboard.
+function waveChart({ id, width, height, months, series, fmtMoney, ariaLabel, left, top, pw, ph, slot, hi, grid, y, xl }) {
+  const px = (i) => left + (i + 0.5) * slot;
+  const base = top + ph;
+  let defs = '';
+  let paths = '';
+  // Draw the larger series first so the smaller one stays visible on top.
+  const order = series.map((s, j) => j).sort((a, b) => months.reduce((t, m) => t + m.values[b], 0) - months.reduce((t, m) => t + m.values[a], 0));
+  for (const j of order) {
+    const pts = months.map((m, i) => [px(i), y(m.values[j] / 100)]);
+    const line = months.length === 1 ? `M${(pts[0][0] - slot / 2).toFixed(1)},${pts[0][1].toFixed(1)}H${(pts[0][0] + slot / 2).toFixed(1)}` : smoothPath(pts);
+    const x0 = months.length === 1 ? pts[0][0] - slot / 2 : pts[0][0];
+    const x1 = months.length === 1 ? pts[0][0] + slot / 2 : pts[pts.length - 1][0];
+    const cls = series[j].cls;
+    defs += `<linearGradient id="${id}w${j}" gradientUnits="userSpaceOnUse" x1="0" y1="${top}" x2="0" y2="${base}">${stop(0, `--${cls}`, 0.6)}${stop(1, `--${cls}`, 0)}</linearGradient><linearGradient id="${id}s${j}" gradientUnits="userSpaceOnUse" x1="${left}" y1="0" x2="${left + pw}" y2="0">${stop(0, `--${cls}`)}${stop(1, `--${cls}b`)}</linearGradient>`;
+    paths += `<path class="wave-area ${cls}" style="fill:url(#${id}w${j})" d="${line}L${x1.toFixed(1)},${base}L${x0.toFixed(1)},${base}Z"/><path class="wave-line ${cls}" style="stroke:url(#${id}s${j})" d="${line}"/>`;
+  }
+  const tips = [];
+  let hits = '';
+  months.forEach((m, i) => {
+    const label = `${m.title}: ${series.map((s, j) => `${s.name} ${fmtMoney(m.values[j])}`).join(', ')}`;
+    tips.push({ title: m.title, rows: series.map((s, j) => ({ cls: s.cls, name: s.name, value: fmtMoney(m.values[j]) })) });
+    const dots = series.map((s, j) => `<circle class="dot ${s.cls}" cx="${px(i).toFixed(1)}" cy="${y(m.values[j] / 100).toFixed(1)}" r="3.5"/>`).join('');
+    hits += `<g class="grp"><line class="xh" x1="${px(i).toFixed(1)}" x2="${px(i).toFixed(1)}" y1="${top}" y2="${base}"/><g class="wdots">${dots}</g><rect class="hit" data-i="${i}" tabindex="0" role="img" aria-label="${esc(label)}" x="${(left + i * slot).toFixed(1)}" y="${top}" width="${slot.toFixed(1)}" height="${ph}"/></g>`;
+  });
+  const html = `<svg class="chart-svg v-wave" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="group" aria-label="${esc(ariaLabel)}"><defs>${defs}</defs>${grid}${paths}${hits}${xl}</svg>`;
+  return { html, tips };
+}
+
 // One line (running balance). months: [{ label, title, value }] (minor units). May go negative.
 export function lineChart({ width, height = 240, months, name, fmtMoney, ariaLabel, variant = 'classic' }) {
   const id = nextId();
@@ -165,7 +196,7 @@ export function lineChart({ width, height = 240, months, name, fmtMoney, ariaLab
   const line = variant === 'classic' ? pts.map(([x, yy], i) => `${i ? 'L' : 'M'}${x.toFixed(1)},${yy.toFixed(1)}`).join('') : smoothPath(pts);
   const area = `${line}L${pts[n - 1][0].toFixed(1)},${y0.toFixed(1)}L${pts[0][0].toFixed(1)},${y0.toFixed(1)}Z`;
 
-  const glow = variant === 'glow';
+  const glow = variant === 'glow' || variant === 'wave';
   const defs = glow
     ? `<defs><linearGradient id="${id}a" gradientUnits="userSpaceOnUse" x1="0" y1="${top}" x2="0" y2="${top + ph}">${stop(0, '--s1', 0.5)}${stop(1, '--s1', 0)}</linearGradient><linearGradient id="${id}l" gradientUnits="userSpaceOnUse" x1="${left}" y1="0" x2="${left + pw}" y2="0">${stop(0, '--s1')}${stop(1, '--s1b')}</linearGradient></defs>`
     : '';

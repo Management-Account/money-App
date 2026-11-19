@@ -463,31 +463,31 @@ button.acct:hover { border-color: rgb(var(--gc) / .55); box-shadow: 0 0 26px rgb
 
 /* ---------- graph styles (classic | smooth | glow); palette follows the theme ---------- */
 .gs-classic, .gs-smooth, .tip.gs-classic, .tip.gs-smooth { --s1b: var(--s1); --s2b: var(--s2); }
-.gs-glow { --s1: #3b82f6; --s1b: #a78bfa; --s2: #ec4899; --s2b: #f9a8d4; }
-:root[data-theme="soft"] .gs-glow { --s1: #2563eb; --s1b: #60a5fa; --s2: #db2777; --s2b: #f472b6; }
-:root[data-theme="ocean"] .gs-glow { --s1: #0ea5c4; --s1b: #67e8f9; --s2: #8b5cf6; --s2b: #c4b5fd; }
-:root[data-theme="sunset"] .gs-glow { --s1: #e06a1f; --s1b: #fbbf24; --s2: #8b5cf6; --s2b: #c4b5fd; }
+:is(.gs-glow, .gs-wave) { --s1: #3b82f6; --s1b: #a78bfa; --s2: #ec4899; --s2b: #f9a8d4; }
+:root[data-theme="soft"] :is(.gs-glow, .gs-wave) { --s1: #2563eb; --s1b: #60a5fa; --s2: #db2777; --s2b: #f472b6; }
+:root[data-theme="ocean"] :is(.gs-glow, .gs-wave) { --s1: #0ea5c4; --s1b: #67e8f9; --s2: #8b5cf6; --s2b: #c4b5fd; }
+:root[data-theme="sunset"] :is(.gs-glow, .gs-wave) { --s1: #e06a1f; --s1b: #fbbf24; --s2: #8b5cf6; --s2b: #c4b5fd; }
 
-.v-smooth .line, .v-glow .line { stroke-width: 2.6; }
+.v-smooth .line, :is(.v-glow, .v-wave) .line { stroke-width: 2.6; }
 .v-smooth .area { fill-opacity: .16; }
-.v-glow .area { fill-opacity: 1; }
-.v-glow .bar { filter: drop-shadow(0 0 5px color-mix(in srgb, var(--s1) 55%, transparent)); }
-.v-glow .bar.s2 { filter: drop-shadow(0 0 5px color-mix(in srgb, var(--s2) 55%, transparent)); }
-.v-glow .line { filter: drop-shadow(0 0 5px color-mix(in srgb, var(--s1) 70%, transparent)); }
-.v-glow .dot { stroke-width: 2; filter: drop-shadow(0 0 5px var(--s1)); }
-.v-glow .grid { stroke-dasharray: 2 5; }
-:root[data-theme="soft"] .v-glow .bar, :root[data-theme="soft"] .v-glow .line { filter: drop-shadow(0 2px 5px color-mix(in srgb, var(--s1) 38%, transparent)); }
-:root[data-theme="soft"] .v-glow .bar.s2 { filter: drop-shadow(0 2px 5px color-mix(in srgb, var(--s2) 38%, transparent)); }
+:is(.v-glow, .v-wave) .area { fill-opacity: 1; }
+:is(.v-glow, .v-wave) .bar { filter: drop-shadow(0 0 5px color-mix(in srgb, var(--s1) 55%, transparent)); }
+:is(.v-glow, .v-wave) .bar.s2 { filter: drop-shadow(0 0 5px color-mix(in srgb, var(--s2) 55%, transparent)); }
+:is(.v-glow, .v-wave) .line { filter: drop-shadow(0 0 5px color-mix(in srgb, var(--s1) 70%, transparent)); }
+:is(.v-glow, .v-wave) .dot { stroke-width: 2; filter: drop-shadow(0 0 5px var(--s1)); }
+:is(.v-glow, .v-wave) .grid { stroke-dasharray: 2 5; }
+:root[data-theme="soft"] :is(.v-glow, .v-wave) .bar, :root[data-theme="soft"] :is(.v-glow, .v-wave) .line { filter: drop-shadow(0 2px 5px color-mix(in srgb, var(--s1) 38%, transparent)); }
+:root[data-theme="soft"] :is(.v-glow, .v-wave) .bar.s2 { filter: drop-shadow(0 2px 5px color-mix(in srgb, var(--s2) 38%, transparent)); }
 
-.gs-smooth .rb-bar, .gs-glow .rb-bar { border-radius: 99px; height: 12px; }
-.gs-glow .rb-bar.s1 { background: linear-gradient(90deg, var(--s1), var(--s1b)); box-shadow: 0 0 10px color-mix(in srgb, var(--s1) 60%, transparent); }
-:root[data-theme="soft"] .gs-glow .rb-bar.s1 { box-shadow: 0 2px 6px color-mix(in srgb, var(--s1) 35%, transparent); }
+.gs-smooth .rb-bar, :is(.gs-glow, .gs-wave) .rb-bar { border-radius: 99px; height: 12px; }
+:is(.gs-glow, .gs-wave) .rb-bar.s1 { background: linear-gradient(90deg, var(--s1), var(--s1b)); box-shadow: 0 0 10px color-mix(in srgb, var(--s1) 60%, transparent); }
+:root[data-theme="soft"] :is(.gs-glow, .gs-wave) .rb-bar.s1 { box-shadow: 0 2px 6px color-mix(in srgb, var(--s1) 35%, transparent); }
 
 .ringtile { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .ring { flex: none; }
 .ring-track { fill: none; stroke: rgb(var(--ov) / .12); stroke-width: 8; }
 .ring-val { fill: none; stroke-width: 8; stroke-linecap: round; }
-.v-glow .ring-val { filter: drop-shadow(0 0 5px color-mix(in srgb, var(--s1) 70%, transparent)); }
+:is(.v-glow, .v-wave) .ring-val { filter: drop-shadow(0 0 5px color-mix(in srgb, var(--s1) 70%, transparent)); }
 .v-smooth .ring-val { stroke: var(--s1) !important; }
 .ring-text { fill: var(--text); font-size: 15px; font-weight: 700; }
 
@@ -496,3 +496,10 @@ button.acct:hover { border-color: rgb(var(--gc) / .55); box-shadow: 0 0 26px rgb
 .graphopt.on { border-color: var(--accent); box-shadow: var(--glow); }
 .gprev { display: block; min-height: 200px; pointer-events: none; }
 .gprev .chart-svg { display: block; }
+
+.wave-area { stroke: none; }
+.wave-line { fill: none; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; filter: drop-shadow(0 0 5px color-mix(in srgb, var(--s1) 60%, transparent)); }
+.wave-line.s2 { filter: drop-shadow(0 0 5px color-mix(in srgb, var(--s2) 60%, transparent)); }
+:root[data-theme="soft"] .wave-line { filter: drop-shadow(0 2px 4px color-mix(in srgb, var(--s1) 35%, transparent)); }
+.v-wave .wdots { opacity: 0; }
+.v-wave .grp:hover .wdots, .v-wave .grp:focus-within .wdots { opacity: 1; }

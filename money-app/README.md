@@ -18,7 +18,7 @@ on any device that opens the site. No build step: plain HTML, CSS and JavaScript
 - **Insights tab**: income vs expenses, running balance, and spending by category for Day (today), Week (7 days), 1 month (30 days), 3 / 6 / 12 months, or a custom date range (hover or tap a chart for exact values; every chart has a "View as table" twin)
 - **All world currencies**: pick any of 160+ ISO currencies in Settings (one currency per account)
 - **Themes tab**: Neon Night (default), Soft Light, Ocean and Sunset. The choice is saved to your account and used on every device
-- **Graph styles** (Themes tab): Classic, Smooth, and Neon glow (glowing gradient columns, wave lines, ring gauge). Colours follow the active theme and are saved to your account
+- **Graph styles** (Themes tab): Classic, Smooth, Neon glow (glowing gradient columns, ring gauge) and Waves (overlapping glowing waves). Colours follow the active theme and are saved to your account
 - **Category emojis**: every category has an emoji (built-in ones come pre-set, new ones are suggested from the name); pick one from the grid or type/paste your own
 - Works offline
 
@@ -48,7 +48,7 @@ npm test         # unit tests for the data logic
 2. On vercel.com: **Add New → Project**, import the repo. Framework preset: **Other**. Leave build command and output directory empty.
 3. Deploy and open the URL.
 
-After every deploy that changes files, bump `CACHE` in `sw.js` (e.g. `pocket-ledger-v12`) so browsers pick up the update.
+After every deploy that changes files, bump `CACHE` in `sw.js` (e.g. `pocket-ledger-v13`) so browsers pick up the update.
 
 ## How sync works
 - The app always reads and writes local data first, so it is fast and works offline.

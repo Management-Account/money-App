@@ -14,6 +14,7 @@ export const themeMeta = (id) => ({ neon: '#0a0f2c', soft: '#e9eef4', ocean: '#0
 export const GRAPH_STYLES = [
   { id: 'classic', name: 'Classic', blurb: 'Flat columns and straight lines.' },
   { id: 'smooth', name: 'Smooth', blurb: 'Rounded columns and flowing curves.' },
+  { id: 'wave', name: 'Waves', blurb: 'Overlapping glowing waves, like a signal trace.' },
   { id: 'glow', name: 'Neon glow', blurb: 'Glowing gradient columns, wave lines and ring gauges.' },
 ];
 export const DEFAULT_GRAPH = 'classic';
