@@ -2,7 +2,7 @@ import { pickerHTML, mountPicker } from './picker.js';
 import { institutionOf, badgeHTML } from './institutions.js';
 import {
   SCHEMA_VERSION, uid, todayStr, monthKey, shiftMonth, toMinor, fromMinor, formatMoney, createState, live, upsert, remove,
-  mergeState, sanitizeState, summarize, toCSV, importCSV, isValidDate, monthsEnding, monthlySeries, balanceBefore, categoryTotals,
+  mergeState, sanitizeState, summarize, toCSV, importCSV, isValidDate, monthsEnding, addDays, daysBetween, unitFor, rangeSeries, balanceBeforeDate, categoryTotalsRange,
   toMinorSigned, liveAccounts, fallbackAccountId, accountIdOf, accountSummaries, removeAccount,
 } from './store.js';
 import { getCurrencies } from './currencies.js';
@@ -39,7 +39,7 @@ function load() {
 
 let state = load();
 // auth: 'signin' | 'signup'
-const ui = { tab: 'home', month: monthKey(todayStr()), q: '', acct: '', ttype: '', txLimit: 50, lastAccount: '', range: 6, auth: 'signin', notice: '', busy: false };
+const ui = { tab: 'home', month: monthKey(todayStr()), q: '', acct: '', ttype: '', txLimit: 50, lastAccount: '', period: '6m', from: '', to: '', auth: 'signin', notice: '', busy: false };
 let deferredInstall = null;
 const syncInfo = { lastAt: 0, error: '' };
 
@@ -415,25 +415,61 @@ function currencyOptions() {
 
 // ---------- insights (charts) ----------
 
-const shortMonth = (key) => {
-  const [y, m] = key.split('-').map(Number);
-  return new Date(y, m - 1, 1).toLocaleDateString(undefined, { month: 'short' });
+const PERIODS = [['day', 'Day'], ['week', 'Week'], ['1m', '1 month'], ['3m', '3 months'], ['6m', '6 months'], ['12m', '12 months'], ['custom', 'Custom']];
+
+const fmtDay = (d, opts) => {
+  const [y, m, dd] = d.split('-').map(Number);
+  return new Date(y, m - 1, dd).toLocaleDateString(undefined, opts);
 };
 
+// The dates, bucket size and wording for the selected Insights period.
+function insightsPeriod() {
+  const today = todayStr();
+  const cur = monthKey(today);
+  switch (ui.period) {
+    case 'day': return { from: today, to: today, name: 'Today' };
+    case 'week': return { from: addDays(today, -6), to: today, name: 'Last 7 days' };
+    case '1m': return { from: addDays(today, -29), to: today, name: 'Last 30 days' };
+    case 'custom': {
+      const from = isValidDate(ui.from) ? ui.from : addDays(today, -29);
+      const to = isValidDate(ui.to) ? ui.to : today;
+      if (from > to) return { from, to, bad: 'The start date must be on or before the end date.', name: 'Custom' };
+      if (daysBetween(from, to) > 3660) return { from, to, bad: 'Pick a range of 10 years or less.', name: 'Custom' };
+      return { from, to, name: `${fmtDay(from, { day: 'numeric', month: 'short', year: 'numeric' })} to ${fmtDay(to, { day: 'numeric', month: 'short', year: 'numeric' })}` };
+    }
+    default: {
+      const n = Number(ui.period.replace('m', '')) || 6;
+      return { from: `${shiftMonth(cur, -(n - 1))}-01`, to: addDays(`${shiftMonth(cur, 1)}-01`, -1), name: `Last ${n} months` };
+    }
+  }
+}
+
 function insightsData() {
-  const months = monthsEnding(monthKey(todayStr()), ui.range);
-  const rows = monthlySeries(state, months);
+  const per = insightsPeriod();
+  if (per.bad) return { per, bad: per.bad, hasData: false };
+  const unit = unitFor(per.from, per.to);
+  const rows = rangeSeries(state, per.from, per.to, unit);
   const income = rows.reduce((t, r) => t + r.income, 0);
   const expense = rows.reduce((t, r) => t + r.expense, 0);
-  let run = balanceBefore(state, months[0]);
+  let run = balanceBeforeDate(state, per.from);
   const balance = rows.map((r) => (run += r.net));
-  const all = categoryTotals(state, months, 'expense');
+  const all = categoryTotalsRange(state, per.from, per.to, 'expense');
   let top = all.slice(0, 8);
   if (all.length > 8) {
     top = [...all.slice(0, 7), { id: 'other', name: 'Other categories', total: all.slice(7).reduce((t, c) => t + c.total, 0), other: true }];
   }
+  const many = rows.length;
+  const labels = rows.map((r) => {
+    if (unit === 'day') {
+      return { label: many <= 7 ? fmtDay(r.key, { weekday: 'short' }) : String(Number(r.key.slice(8))), title: fmtDay(r.key, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }) };
+    }
+    const [y, m] = r.key.split('-').map(Number);
+    const base = new Date(y, m - 1, 1).toLocaleDateString(undefined, { month: 'short' });
+    return { label: many > 12 ? `${base} ${String(y).slice(2)}` : base, title: monthLabel(r.key) };
+  });
+  const units = unit === 'day' ? rows.length : rows.length;
   return {
-    months, rows, income, expense, net: income - expense, balance,
+    per, unit, rows, labels, income, expense, net: income - expense, balance, units,
     rate: income > 0 ? (income - expense) / income : null,
     cats: top.map((c) => ({ ...c, share: expense ? c.total / expense : 0 })),
     hasData: income > 0 || expense > 0,
@@ -457,22 +493,35 @@ function tableView(head, rows) {
   </table></div></details>`;
 }
 
+function insightsFilter() {
+  const buttons = PERIODS.map(([id, label]) => `<button class="${ui.period === id ? 'on' : ''}" data-action="range" data-p="${id}" aria-pressed="${ui.period === id}">${label}</button>`).join('');
+  let custom = '';
+  if (ui.period === 'custom') {
+    const per = insightsPeriod();
+    custom = `<div class="daterange card">
+      <div class="field"><label for="c-from">From</label><input type="date" id="c-from" value="${esc(per.from)}"></div>
+      <div class="field"><label for="c-to">To</label><input type="date" id="c-to" value="${esc(per.to)}"></div>
+    </div>${per.bad ? `<p class="error" role="alert">${esc(per.bad)}</p>` : ''}`;
+  }
+  return `<div class="filters scroll" role="group" aria-label="Period">${buttons}</div>${custom}`;
+}
+
 function viewInsights() {
   const d = insightsData();
-  const filter = `<div class="filters" role="group" aria-label="Period">${[3, 6, 12]
-    .map((n) => `<button class="${ui.range === n ? 'on' : ''}" data-action="range" data-n="${n}" aria-pressed="${ui.range === n}">${n} months</button>`)
-    .join('')}</div>`;
+  const filter = insightsFilter();
   if (!d.hasData) {
-    return `<h1>Insights</h1>${filter}<div class="card empty">No income or expenses in the last ${ui.range} months yet. Add a few transactions and your charts will appear here.</div>`;
+    return `<h1>Insights</h1>${filter}${d.bad ? '' : `<div class="card empty">No income or expenses for ${esc(d.per.name.toLowerCase())} yet. Add a few transactions and your charts will appear here.</div>`}`;
   }
   const pct = d.rate === null ? '–' : `${Math.round(d.rate * 100)}%`;
   const tile = (label, value, sub, cls = '') =>
     `<div class="card tile"><div class="label">${label}</div><div class="value ${cls}">${esc(value)}</div><div class="sub">${esc(sub)}</div></div>`;
-  const per = `Last ${ui.range} months`;
+  const avg = d.units > 1 ? `About ${money(Math.round(d.expense / d.units))} a ${d.unit}` : d.per.name;
+  const colHead = d.unit === 'day' ? 'Day' : 'Month';
+  const balHint = d.unit === 'day' ? 'at the end of each day' : 'at the end of each month';
   return `<h1>Insights</h1>${filter}
     <div class="tiles">
-      ${tile('Income', moneyTile(d.income), per, 'income')}
-      ${tile('Expenses', moneyTile(d.expense), `About ${money(Math.round(d.expense / ui.range))} a month`, 'expense')}
+      ${tile('Income', moneyTile(d.income), d.per.name, 'income')}
+      ${tile('Expenses', moneyTile(d.expense), avg, 'expense')}
       ${tile('Net', moneyTile(d.net), d.net >= 0 ? 'You saved this much' : 'You spent more than you earned', d.net < 0 ? 'expense' : '')}
       ${tile('Savings rate', pct, d.rate === null ? 'No income yet' : 'Share of income kept')}
     </div>
@@ -480,14 +529,14 @@ function viewInsights() {
       <h2>Income vs expenses</h2>
       <div class="legend"><span class="lg"><i class="s1"></i>Income</span><span class="lg"><i class="s2"></i>Expenses</span></div>
       <div class="chart" id="ch-monthly"></div>
-      ${tableView(['Month', 'Income', 'Expenses', 'Net'], d.months.map((k, i) => [monthLabel(k), money(d.rows[i].income), money(d.rows[i].expense), money(d.rows[i].net)]))}
+      ${tableView([colHead, 'Income', 'Expenses', 'Net'], d.rows.map((r, i) => [d.labels[i].title, money(r.income), money(r.expense), money(r.net)]))}
     </section>
-    <section class="card chart-card">
+    ${d.rows.length > 1 ? `<section class="card chart-card">
       <h2>Running balance</h2>
-      <p class="hint" style="margin:-4px 0 6px">Everything you have earned minus everything you have spent, at the end of each month.</p>
+      <p class="hint" style="margin:-4px 0 6px">Everything you have earned minus everything you have spent, ${balHint}.</p>
       <div class="chart" id="ch-balance"></div>
-      ${tableView(['Month', 'Balance'], d.months.map((k, i) => [monthLabel(k), money(d.balance[i])]))}
-    </section>
+      ${tableView([colHead, 'Balance'], d.rows.map((r, i) => [d.labels[i].title, money(d.balance[i])]))}
+    </section>` : ''}
     <section class="card chart-card">
       <h2>Where the money goes</h2>
       ${d.cats.length ? '<div class="chart" id="ch-cats"></div>' : '<div class="empty">No spending in this period.</div>'}
@@ -501,7 +550,7 @@ function drawInsights() {
   if (!d.hasData) return;
   const tipEl = $('#tip');
   hideTip();
-  const labels = d.months.map((key) => ({ label: shortMonth(key), title: monthLabel(key) }));
+  const labels = d.labels;
   const mount = (id, make) => {
     const el = $(id);
     if (!el || !el.clientWidth) return;
@@ -515,7 +564,7 @@ function drawInsights() {
       months: labels.map((l, i) => ({ ...l, values: [d.rows[i].income, d.rows[i].expense] })),
       series: [{ name: 'Income', cls: 's1' }, { name: 'Expenses', cls: 's2' }],
       fmtMoney: money,
-      ariaLabel: 'Income and expenses by month',
+      ariaLabel: 'Income and expenses over time',
     }),
   );
   mount('#ch-balance', (width) =>
@@ -524,7 +573,7 @@ function drawInsights() {
       months: labels.map((l, i) => ({ ...l, value: d.balance[i] })),
       name: 'Balance',
       fmtMoney: money,
-      ariaLabel: 'Running balance by month',
+      ariaLabel: 'Running balance over time',
     }),
   );
   mount('#ch-cats', () => rankedBars({ rows: d.cats, fmtMoney: money }));
@@ -893,7 +942,7 @@ document.addEventListener('click', async (e) => {
       openWalletDialog(id);
       break;
     case 'range':
-      ui.range = Number(el.dataset.n) || 6;
+      ui.period = PERIODS.some((p) => p[0] === el.dataset.p) ? el.dataset.p : '6m';
       render();
       break;
     case 'change-password':
@@ -997,6 +1046,13 @@ document.addEventListener('input', (e) => {
 });
 
 document.addEventListener('change', (e) => {
+  if (e.target.id === 'c-from' || e.target.id === 'c-to') {
+    ui[e.target.id === 'c-from' ? 'from' : 'to'] = e.target.value;
+    if (!isValidDate(ui.from)) ui.from = insightsPeriod().from;
+    if (!isValidDate(ui.to)) ui.to = insightsPeriod().to;
+    render();
+    return;
+  }
   if (e.target.id === 'f-acct') {
     ui.acct = e.target.value;
     ui.txLimit = 50;

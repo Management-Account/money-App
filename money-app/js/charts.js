@@ -46,7 +46,7 @@ function frame(width, height, ticks, hi, lo, left, top, pw, ph, fmt) {
 }
 
 function xLabels(labels, left, slot, height) {
-  const every = slot < 38 ? 2 : 1;
+  const every = Math.max(1, Math.ceil(36 / slot));
   const n = labels.length;
   return labels
     .map((l, i) =>

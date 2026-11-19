@@ -6,7 +6,7 @@ on any device that opens the site. No build step: plain HTML, CSS and JavaScript
 ## Features
 - Income and expense transactions with categories, notes, dates and an account
 - **Accounts**: any number of accounts (Cash, a bank account, a wallet, a card...), each with its own balance (starting balance + income - expenses)
-- **Bank / wallet / card picker**: a searchable dropdown (English or Arabic) with the Egyptian banks, mobile wallets and payment apps, and cards, each with a badge; type a name to add your own custom bank
+- **Bank / wallet / card picker**: a searchable dropdown (search in English or Arabic) with the Egyptian banks, mobile wallets and payment apps, and cards, each with a badge; type a name to add your own custom bank
 - **Overview**: total across all accounts, then each account, this month's numbers, and only the 10 latest transactions
 - **Transactions tab**: every transaction of all time, grouped by day, with search and account / income / expense filters
 - Monthly overview: income, expenses, balance, spending by category
@@ -15,7 +15,7 @@ on any device that opens the site. No build step: plain HTML, CSS and JavaScript
 - CSV export/import and JSON backup/restore
 - Accounts with just a username and password (no email): sign up, sign in, sign out, change password
 - Same data on every device (Supabase database, each user sees only their own rows)
-- **Insights tab**: income vs expenses by month, running balance, and spending by category, over the last 3, 6 or 12 months (hover or tap a chart for exact values; every chart has a "View as table" twin)
+- **Insights tab**: income vs expenses, running balance, and spending by category for Day (today), Week (7 days), 1 month (30 days), 3 / 6 / 12 months, or a custom date range (hover or tap a chart for exact values; every chart has a "View as table" twin)
 - **All world currencies**: pick any of 160+ ISO currencies in Settings (one currency per account)
 - Modern dark "neon glass" theme, works offline
 
@@ -45,7 +45,7 @@ npm test         # unit tests for the data logic
 2. On vercel.com: **Add New → Project**, import the repo. Framework preset: **Other**. Leave build command and output directory empty.
 3. Deploy and open the URL.
 
-After every deploy that changes files, bump `CACHE` in `sw.js` (e.g. `pocket-ledger-v6`) so browsers pick up the update.
+After every deploy that changes files, bump `CACHE` in `sw.js` (e.g. `pocket-ledger-v7`) so browsers pick up the update.
 
 ## How sync works
 - The app always reads and writes local data first, so it is fast and works offline.
@@ -83,7 +83,7 @@ Money is stored as integer minor units (cents/piasters). This makes cloud sync s
 - Clearing site data in a browser removes the local copy; signed-in users get it back from the database on next sign in.
 - Deleting an account is not built in (do it from the Supabase dashboard, Authentication → Users; their rows are removed automatically; users appear there as `name@pocketledger.app`).
 - One currency per account (switching it relabels existing amounts, it does not convert them). Amounts are always shown with two decimals, even for currencies such as JPY that normally have none.
-- Charts cover the most recent 3, 6 or 12 months up to the current month and are not split by account.
+- Charts are not split by account. Ranges up to 62 days show one bar per day, longer ones one per month. "Day" is today only (the app does not record times).
 - There are no transfers between accounts yet (record the move as an expense in one account and income in the other).
 - Deleting an account also deletes the transactions recorded in it (the app asks first). You always keep at least one account.
 - Transactions saved before accounts existed count toward the default "Cash" account.
@@ -93,7 +93,7 @@ Money is stored as integer minor units (cents/piasters). This makes cloud sync s
   public lists (Wikipedia and 2026 bank directories); the Central Bank of Egypt's own list could not be fetched. Banks merge, rename and close,
   so check it occasionally. To add or fix one, edit that file. Keep each `id` unchanged once people may have picked it.
 - Entries like Onebank (formerly Bank Audi / Blom) and some wallet names are the least certain; verify them if they matter to you.
-- **Logos**: official logos are trademarks and are not bundled. Each institution gets a generated badge with its initials. To show a real logo, put the
-  file in `logos/` (for example `logos/nbe.svg`) and list it in `js/logos.js` (`export const LOGOS = { nbe: 'logos/nbe.svg' }`), then add the file to `sw.js` if you want it cached offline.
-  Only add logos you have the right to use.
+- **Logos**: official logos are trademarks, so only logos you supply are shown (Banque Misr's is included). Everything else gets a generated badge with its initials.
+  To add a logo, save the image in `logos/` named after the institution id (`nbe.png`, `cib.svg`, `vfcash.png`; ids are in `js/institutions.js`),
+  run `node scripts/build-logos.mjs` (or `npm run logos`), and add the file to the list in `sw.js` if you want it available offline. Use only logos you have the right to use.
 - Custom banks a user types are saved with the account (stored as `~Name`) and are not added to the shared list.

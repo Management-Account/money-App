@@ -5,10 +5,10 @@
 // Custom institutions typed by a user are stored as "~Name" and are never in this list.
 
 export const GROUPS = [
-  ['bank', 'Banks'],
-  ['wallet', 'Mobile wallets & payment apps'],
-  ['card', 'Cards'],
-  ['other', 'Other'],
+  ['bank', '🏦 Banks'],
+  ['wallet', '📱 Mobile wallets & payment apps'],
+  ['card', '💳 Cards'],
+  ['other', '💰 Other'],
 ];
 
 // [id, English name, Arabic name, short badge text, extra search words]

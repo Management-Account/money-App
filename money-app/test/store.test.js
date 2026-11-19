@@ -365,3 +365,32 @@ test('accounts keep their institution through sanitize and summaries; old accoun
   assert.equal(clean.accounts.find((a) => a.id === old.id).institution, '');
   assert.equal(accountSummaries(clean).accounts.find((a) => a.id === acc.id).institution, 'cib');
 });
+
+// ---- date-range analytics ----
+import { addDays, daysBetween, unitFor, bucketKeys, rangeSeries, balanceBeforeDate, categoryTotalsRange } from '../js/store.js';
+
+test('addDays / daysBetween handle month and year edges', () => {
+  assert.equal(addDays('2026-12-31', 1), '2027-01-01');
+  assert.equal(addDays('2026-03-01', -1), '2026-02-28');
+  assert.equal(daysBetween('2026-11-12', '2026-11-18'), 6);
+});
+
+test('ranges up to 62 days are daily, longer ones monthly', () => {
+  assert.equal(unitFor('2026-11-19', '2026-11-19'), 'day');
+  assert.equal(bucketKeys('2026-11-13', '2026-11-19').length, 7);
+  assert.equal(unitFor('2026-01-01', '2026-03-03'), 'day');
+  assert.equal(unitFor('2026-01-01', '2026-03-04'), 'month');
+  assert.deepEqual(bucketKeys('2026-01-15', '2026-03-04', 'month'), ['2026-01', '2026-02', '2026-03']);
+});
+
+test('rangeSeries, balanceBeforeDate and categoryTotalsRange only count the chosen dates', () => {
+  const s = createState();
+  const cat = s.categories.find((c) => c.type === 'expense').id;
+  const mk = (date, type, amount) => ({ id: crypto.randomUUID(), type, amount, categoryId: cat, accountId: s.accounts[0].id, date, note: '', updatedAt: 1 });
+  s.transactions = [mk('2026-11-10', 'income', 1000), mk('2026-11-12', 'expense', 300), mk('2026-11-13', 'expense', 200), mk('2026-11-20', 'expense', 999)];
+  const rows = rangeSeries(s, '2026-11-12', '2026-11-14');
+  assert.deepEqual(rows.map((r) => [r.key, r.expense]), [['2026-11-12', 300], ['2026-11-13', 200], ['2026-11-14', 0]]);
+  assert.equal(balanceBeforeDate(s, '2026-11-12'), 1000);
+  assert.equal(categoryTotalsRange(s, '2026-11-12', '2026-11-14')[0].total, 500);
+  assert.equal(rangeSeries(s, '2026-01-01', '2026-12-31', 'month').find((r) => r.key === '2026-11').expense, 1499);
+});

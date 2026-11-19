@@ -305,6 +305,65 @@ export function removeAccount(state, id) {
 // ---------- analytics ----------
 
 // ['2026-06', ..., '2026-11'] : `count` months ending at endKey, oldest first.
+// ---------- date-range analytics (Insights: day / week / month / custom) ----------
+
+export function addDays(dateStr, n) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
+}
+
+export function daysBetween(a, b) {
+  const t = (x) => { const [y, m, d] = x.split('-').map(Number); return Date.UTC(y, m - 1, d); };
+  return Math.round((t(b) - t(a)) / 86400000);
+}
+
+// Short ranges are shown day by day, long ones month by month.
+export const unitFor = (from, to) => (daysBetween(from, to) + 1 <= 62 ? 'day' : 'month');
+
+export function bucketKeys(from, to, unit = unitFor(from, to)) {
+  const out = [];
+  if (unit === 'day') {
+    for (let d = from; d <= to; d = addDays(d, 1)) out.push(d);
+  } else {
+    const end = monthKey(to);
+    for (let k = monthKey(from); k <= end; k = shiftMonth(k, 1)) out.push(k);
+  }
+  return out;
+}
+
+const inRange = (t, from, to) => t.date >= from && t.date <= to;
+
+export function rangeSeries(state, from, to, unit = unitFor(from, to)) {
+  const keys = bucketKeys(from, to, unit);
+  const idx = new Map(keys.map((k, i) => [k, i]));
+  const rows = keys.map((key) => ({ key, income: 0, expense: 0, net: 0 }));
+  for (const t of live(state.transactions)) {
+    if (!inRange(t, from, to)) continue;
+    const i = idx.get(unit === 'day' ? t.date : monthKey(t.date));
+    if (i === undefined) continue;
+    if (t.type === 'income') rows[i].income += t.amount;
+    else rows[i].expense += t.amount;
+  }
+  for (const r of rows) r.net = r.income - r.expense;
+  return rows;
+}
+
+export function balanceBeforeDate(state, from) {
+  let sum = 0;
+  for (const t of live(state.transactions)) if (t.date < from) sum += t.type === 'income' ? t.amount : -t.amount;
+  return sum;
+}
+
+export function categoryTotalsRange(state, from, to, type = 'expense') {
+  const names = new Map(state.categories.map((c) => [c.id, c.name]));
+  const totals = new Map();
+  for (const t of live(state.transactions)) {
+    if (t.type !== type || !inRange(t, from, to)) continue;
+    totals.set(t.categoryId, (totals.get(t.categoryId) || 0) + t.amount);
+  }
+  return [...totals].map(([id, total]) => ({ id, name: names.get(id) || 'Uncategorized', total })).sort((a, b) => b.total - a.total);
+}
+
 export function monthsEnding(endKey, count) {
   const out = [];
   for (let i = count - 1; i >= 0; i--) out.push(shiftMonth(endKey, -i));

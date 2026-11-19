@@ -40,7 +40,7 @@ export function mountPicker(root, onChange = () => {}) {
 
   function optionHTML(i, idx) {
     return `<li role="option" id="${root.id}-o${idx}" data-v="${esc(i.id)}" aria-selected="false">${badgeHTML(i, 'sm')}
-      <span class="opt-text"><span class="opt-name">${esc(i.name)}</span>${i.ar ? `<span class="opt-ar" lang="ar" dir="rtl">${esc(i.ar)}</span>` : ''}</span></li>`;
+      <span class="opt-text"><span class="opt-name">${esc(i.name)}</span></span></li>`;
   }
 
   function render() {
@@ -64,7 +64,7 @@ export function mountPicker(root, onChange = () => {}) {
       if (!exact) {
         const cv = customValue(text);
         html += `<li role="option" class="opt-custom" id="${root.id}-o${n}" data-v="${esc(cv)}" aria-selected="false">${badgeHTML(institutionOf(cv), 'sm')}
-          <span class="opt-text"><span class="opt-name">Use “${esc(text)}” as a custom bank</span><span class="opt-sub">Not in the list? Add your own</span></span></li>`;
+          <span class="opt-text"><span class="opt-name">Use “${esc(text)}” as a custom bank</span><span class="opt-sub">✨ Not in the list? Add your own</span></span></li>`;
         vals.push(cv);
         n++;
       }
