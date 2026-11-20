@@ -25,7 +25,7 @@ export const GRAPH_STYLES = [
 ];
 export const BALANCE_STYLES = [
   { id: 'cards', name: 'Stacked cards', blurb: 'Total balance first, then one swipeable card for each account.' },
-  { id: 'classic', name: 'Classic', blurb: 'One total balance card with your accounts listed underneath.' },
+  { id: 'classic', name: 'Classic', blurb: 'The original total balance card. Use the arrows on it to step through your accounts.' },
 ];
 export const DEFAULT_BALANCE = 'cards';
 export const isBalance = (id) => BALANCE_STYLES.some((b) => b.id === id);

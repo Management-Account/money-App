@@ -447,6 +447,64 @@ function deckHTML(w, s) {
   </section>`;
 }
 
+// Classic style: the original total-balance card, with arrows to step through the accounts.
+function heroBody(it) {
+  return `<div class="label hn-label">${it.key === 'total' ? '' : `<span class="hn-ico">${it.icon}</span>`}${esc(it.title)}</div>
+    <div class="hero-value ${it.value < 0 ? 'expense' : ''}">${esc(money(it.value))}</div>
+    <div class="sub">${esc(it.sub)}</div>`;
+}
+
+function heroNavHTML(w, s) {
+  const items = deckItems(w, s);
+  const n = items.length;
+  if (ui.deck >= n || ui.deck < 0) ui.deck = 0;
+  const it = items[ui.deck];
+  return `<section class="card hero hero-nav" role="group" aria-roledescription="carousel" aria-label="Balances" data-n="${n}"><span class="blob" aria-hidden="true"></span>
+    <div class="hn-body" data-action="open-acct" data-key="${esc(it.key)}" role="button" tabindex="0" aria-live="polite">${heroBody(it)}</div>
+    ${n > 1 ? `<div class="hn-nav"><button class="icon-pill sm" data-hn="prev" aria-label="Previous account">\u2039</button>
+      <div class="dots">${items.map((x, i) => `<button class="dot ${i === ui.deck ? 'on' : ''}" data-hn="${i}" aria-label="${esc(x.title)}"></button>`).join('')}</div>
+      <button class="icon-pill sm" data-hn="next" aria-label="Next account">\u203a</button></div>` : ''}
+  </section>`;
+}
+
+function mountHeroNav(w, s) {
+  const root = $('.hero-nav');
+  if (!root) return;
+  const items = deckItems(w, s);
+  const n = items.length;
+  const body = root.querySelector('.hn-body');
+  const dots = [...root.querySelectorAll('.dot')];
+  let busy = false;
+  const show = (to, dir) => {
+    if (busy || to === ui.deck) return;
+    busy = true;
+    body.classList.add(dir > 0 ? 'out-l' : 'out-r');
+    setTimeout(() => {
+      ui.deck = to;
+      body.innerHTML = heroBody(items[to]);
+      body.dataset.key = items[to].key;
+      dots.forEach((d, i) => d.classList.toggle('on', i === to));
+      body.classList.remove('out-l', 'out-r');
+      body.classList.add('snap', dir > 0 ? 'in-r' : 'in-l');
+      void body.offsetWidth;
+      body.classList.remove('snap', 'in-r', 'in-l');
+      setTimeout(() => { busy = false; }, 220);
+    }, 150);
+  };
+  root.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-hn]');
+    if (!b) return;
+    const v = b.dataset.hn;
+    if (v === 'next') show((ui.deck + 1) % n, 1);
+    else if (v === 'prev') show((ui.deck - 1 + n) % n, -1);
+    else show(Number(v), Number(v) > ui.deck ? 1 : -1);
+  });
+  root.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight') { show((ui.deck + 1) % n, 1); e.preventDefault(); }
+    if (e.key === 'ArrowLeft') { show((ui.deck - 1 + n) % n, -1); e.preventDefault(); }
+  });
+}
+
 function mountDeck() {
   const deck = $('.deck');
   if (!deck) return;
@@ -550,7 +608,7 @@ function viewHome() {
   const classic = balanceStyle() === 'classic';
   return `${topbarHTML(s)}<div class="syncline hint" aria-live="polite">${esc(syncText())}</div>
     <div class="dash">
-      <div class="d-hero">${classic ? classicTotalHTML(w, s) : deckHTML(w, s)}</div>
+      <div class="d-hero">${classic ? heroNavHTML(w, s) : deckHTML(w, s)}</div>
       <section class="card chart-card d-stats"><h2>Statistics <span class="muted" style="font-weight:400">· This week</span></h2><div class="ch" id="ch-week"></div></section>
       <section class="card d-ring"><h2>Spending by category <span class="muted" style="font-weight:400">· ${esc(monthLabel(ui.month))}</span></h2><div id="donut" class="donut-wrap"></div></section>
       <section class="card chart-card d-month"><h2>Monthly overview</h2><div class="ch" id="ch-six"></div></section>
@@ -1067,7 +1125,7 @@ function viewThemes() {
       <span class="th-blurb">${esc(b.blurb)}</span>
     </button>`).join('')}</div>
     <h2>Accounts list on Home</h2>
-    <p class="hint">Show or hide the list of account cards at the bottom of Home. It works with either balance card style.</p>
+    <p class="hint">Show or hide a list of account cards at the bottom of Home. It works with either balance card style.</p>
     <div class="graphs">${ACCOUNT_LIST_OPTIONS.map((o) => `<button class="graphopt balopt ${o.id === accountListMode() ? 'on' : ''}" data-action="acclist" data-id="${o.id}" aria-pressed="${o.id === accountListMode()}">
       <span class="bprev bp-list-${o.id}" aria-hidden="true">${o.id === 'show' ? '<i></i><u></u><u></u><u></u>' : '<i></i>'}</span>
       <span class="th-name">${esc(o.name)}${o.id === accountListMode() ? ' <span class="th-on">✓ In use</span>' : ''}</span>
@@ -1113,6 +1171,7 @@ function render() {
   $('#main').classList.toggle('wide', ui.tab === 'home');
   drawHome();
   mountDeck();
+  if ($('.hero-nav')) { const ww = accountSummaries(state); mountHeroNav(ww, summarize(state, ui.month)); }
   drawInsights();
   drawGraphPreviews();
 }
@@ -1869,7 +1928,7 @@ window.addEventListener('beforeinstallprompt', (e) => {
 });
 
 document.addEventListener('keydown', (e) => {
-  if ((e.key === 'Enter' || e.key === ' ') && e.target?.matches?.('.dcard[data-flat]')) {
+  if ((e.key === 'Enter' || e.key === ' ') && e.target?.matches?.('.dcard[data-flat], .hn-body')) {
     e.preventDefault();
     e.target.click();
     return;

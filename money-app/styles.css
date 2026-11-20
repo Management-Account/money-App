@@ -815,3 +815,17 @@ button.acct:hover { border-color: rgb(var(--gc) / .55); box-shadow: 0 0 26px rgb
 .bp-list-show { display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: 38px 22px; gap: 6px; align-content: center; padding: 0 12%; }
 .bp-list-show i { grid-column: 1 / -1; width: 100%; height: 100%; } .bp-list-show u { width: 100%; height: 100%; opacity: .4; text-decoration: none; }
 .bp-list-hide i { width: 70%; height: 46px; }
+
+/* classic balance card with arrows */
+.hero-nav { display: flex; flex-direction: column; justify-content: center; gap: 14px; min-height: 236px; }
+.hn-body { position: relative; z-index: 1; cursor: pointer; transition: transform .2s ease, opacity .2s ease; outline: none; max-width: calc(100% - 150px); min-width: 0; }
+.hn-body:focus-visible { outline: 2px solid var(--accent); outline-offset: 6px; border-radius: 12px; }
+.hn-body.out-l { transform: translateX(-26px); opacity: 0; } .hn-body.out-r { transform: translateX(26px); opacity: 0; }
+.hn-body.in-r { transform: translateX(26px); opacity: 0; } .hn-body.in-l { transform: translateX(-26px); opacity: 0; }
+.hn-body.snap { transition: none; }
+.hn-label { display: flex; align-items: center; gap: 10px; }
+.hn-ico { display: inline-flex; width: 30px; height: 30px; flex: none; }
+.hn-ico .ibadge, .hn-ico .acct-ico { width: 30px; height: 30px; border-radius: 50%; }
+.hn-body .hero-value { overflow: hidden; text-overflow: ellipsis; }
+.hn-nav { position: relative; z-index: 1; display: flex; align-items: center; gap: 12px; }
+@media (max-width: 520px) { .hn-body { max-width: 100%; } .hero-nav .blob { opacity: .35; } }

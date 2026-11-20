@@ -129,3 +129,7 @@ Every colour in `styles.css` comes from variables on `:root`. A theme is one blo
 - v26: smoother spending donut (continuous ring, sweep-in animation, soft hover).
 - v27: Classic balance layout now uses the same card style (total card + a grid of account cards); top row aligned in both layouts.
 - v28: Classic balance = single flat card with no accounts list; new Themes option 'Accounts list on Home' (hidden by default) works with either balance style. Re-run supabase/schema.sql once.
+- v29: Classic = the original look (hero with blob + every account as the old account cards).
+
+## v30
+Classic balance style is now the original hero card with no account list underneath. Use the arrows (or dots, or the left/right keys) on the card to step through Total balance and each account; tapping the card opens that account's transactions. "Accounts list on Home" now works with either style.
