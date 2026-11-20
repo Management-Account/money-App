@@ -102,6 +102,35 @@ export function ringGauge({ value, text, size = 84, variant = 'glow' }) {
     <text class="ring-text" x="50%" y="50%" text-anchor="middle" dominant-baseline="central">${esc(text)}</text></svg>`;
 }
 
+// Donut: a thick ring split by category with a raised disc in the middle.
+// rows: [{ name, value (minor units), share (0..1), color, other }]
+export function donutChart({ rows, size = 168, centerTop = '', centerText = '', ariaLabel = '', fmtMoney, animate = false }) {
+  const stroke = 16;
+  const r = size / 2 - stroke / 2 - 4;
+  const c = 2 * Math.PI * r;
+  const mid = size / 2;
+  const tips = [];
+  let acc = 0;
+  const segs = rows
+    .map((row, i) => {
+      const arc = Math.max(0, row.share) * c;
+      const solo = rows.length === 1;
+      const len = solo ? c : Math.max(0.5, arc - 3);
+      const off = solo ? 0 : acc + 1.5;
+      acc += arc;
+      const color = row.color || (row.other ? 'var(--muted)' : 'var(--s1)');
+      tips.push({ title: row.name, rows: [{ cls: row.other ? 'other' : 's1', color: row.color, name: `${Math.round(row.share * 100)}% of spending`, value: fmtMoney(row.value) }] });
+      return `<circle class="dn-seg" data-i="${i}" tabindex="0" role="img" aria-label="${esc(`${row.name}: ${fmtMoney(row.value)}, ${Math.round(row.share * 100)}%`)}" cx="${mid}" cy="${mid}" r="${r}" stroke-dasharray="${len.toFixed(1)} ${(c - len).toFixed(1)}" stroke-dashoffset="${(-off).toFixed(1)}" transform="rotate(-90 ${mid} ${mid})" style="stroke:${esc(color)};--i:${i};--c:${c.toFixed(1)}"/>`;
+    })
+    .join('');
+  const inset = Math.round(stroke + 15);
+  const html = `<div class="donut${animate ? ' dn-anim' : ''}" style="width:${size}px;height:${size}px;--inset:${inset}px">
+    <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" role="group" aria-label="${esc(ariaLabel)}">
+      <circle class="dn-track" cx="${mid}" cy="${mid}" r="${r}"/>${segs}</svg>
+    <div class="dn-disc"><span class="dn-sub">${esc(centerTop)}</span><b>${esc(centerText)}</b></div></div>`;
+  return { html, tips };
+}
+
 // Grouped columns. months: [{ label, title, values: [..one per series] }] (values in minor units)
 export function columnChart({ width, height = 240, months, series, fmtMoney, ariaLabel, variant = 'classic' }) {
   const id = nextId();

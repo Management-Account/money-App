@@ -124,3 +124,6 @@ Every colour in `styles.css` comes from variables on `:root`. A theme is one blo
 - v19: dashboard cards aligned in an equal 2x2 grid; changes now sync within a fraction of a second (and on tab hide / page close).
 - v20: **Transfers** between accounts with optional fee and a choice of which account pays the fee. Re-run supabase/schema.sql once.
 - v21: transfers are saved as an expense in the source account, an income in the destination account and a fee expense; Home balance cards: Total first, then one stacked card per account, swipe left for the next. Re-run supabase/schema.sql once.
+- v24: Insights has a **Net worth** section (total, change, assets, owed, chart over time, per-account breakdown).
+- v25: Home spending-by-category donut replaces the savings-rate card; Net worth tiles trimmed; Themes: choose Stacked cards or Classic total balance card. Re-run supabase/schema.sql once.
+- v26: smoother spending donut (continuous ring, sweep-in animation, soft hover).

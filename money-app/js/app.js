@@ -1,15 +1,15 @@
 import { pickerHTML, mountPicker } from './picker.js';
 import { EMOJI_GROUPS, categoryEmoji, suggestEmoji, validEmoji } from './emoji.js';
 import { categoryColor, nextColor, validColor, PALETTE } from './colors.js';
-import { THEMES, DEFAULT_THEME, isTheme, themeMeta, GRAPH_STYLES, DEFAULT_GRAPH, isGraph } from './themes.js';
+import { THEMES, DEFAULT_THEME, isTheme, themeMeta, GRAPH_STYLES, DEFAULT_GRAPH, isGraph, BALANCE_STYLES, DEFAULT_BALANCE, isBalance } from './themes.js';
 import { institutionOf, badgeHTML } from './institutions.js';
 import {
   SCHEMA_VERSION, uid, todayStr, monthKey, shiftMonth, toMinor, fromMinor, formatMoney, createState, live, upsert, remove,
   mergeState, sanitizeState, summarize, toCSV, importCSV, isValidDate, monthsEnding, addDays, daysBetween, unitFor, rangeSeries, balanceBeforeDate, categoryTotalsRange, validLogo,
-  toMinorSigned, liveAccounts, fallbackAccountId, accountIdOf, accountSummaries, removeAccount, FEE_CAT, FEE_NAME, isTransferTx, transferLegs,
+  toMinorSigned, liveAccounts, fallbackAccountId, accountIdOf, accountSummaries, removeAccount, FEE_CAT, FEE_NAME, isTransferTx, transferLegs, netWorthSeries,
 } from './store.js';
 import { getCurrencies } from './currencies.js';
-import { columnChart, lineChart, rankedBars, ringGauge, attachTips, hideTip } from './charts.js';
+import { columnChart, lineChart, rankedBars, ringGauge, donutChart, attachTips, hideTip } from './charts.js';
 import {
   cloudEnabled, AuthError, NetworkError, getSession, getOwner, setOwner, signUp, signIn, signOut, setPassword, syncNow,
   USERNAME_RE, normalizeUsername, displayName,
@@ -42,7 +42,7 @@ function load() {
 
 let state = load();
 // auth: 'signin' | 'signup'
-const ui = { tab: 'home', month: monthKey(todayStr()), q: '', acct: '', ttype: '', txLimit: 50, lastAccount: '', deck: 0, period: '6m', from: '', to: '', auth: 'signin', notice: '', busy: false };
+const ui = { tab: 'home', month: monthKey(todayStr()), q: '', acct: '', ttype: '', txLimit: 50, lastAccount: '', deck: 0, donutSig: '', period: '6m', from: '', to: '', auth: 'signin', notice: '', busy: false };
 let deferredInstall = null;
 const syncInfo = { lastAt: 0, error: '' };
 
@@ -531,23 +531,22 @@ function mountDeck() {
 function viewHome() {
   const s = summarize(state, ui.month);
   const w = accountSummaries(state);
-  const rate = s.income > 0 ? Math.max(0, Math.min(1, s.net / s.income)) : 0;
+  const classic = balanceStyle() === 'classic';
   return `${topbarHTML(s)}<div class="syncline hint" aria-live="polite">${esc(syncText())}</div>
     <div class="dash">
-      <div class="d-hero">${deckHTML(w, s)}</div>
+      <div class="d-hero">${classic ? heroHTML(w) : deckHTML(w, s)}</div>
       <section class="card chart-card d-stats"><h2>Statistics <span class="muted" style="font-weight:400">· This week</span></h2><div class="ch" id="ch-week"></div></section>
-      <section class="card d-ring"><h2>Savings rate</h2><div class="ring-row"><span id="ring-save"></span>
-        <p class="hint">${s.income > 0 ? `You kept ${Math.round(rate * 100)}% of this month's income.` : 'Add income this month to see how much you keep.'}</p></div></section>
+      <section class="card d-ring"><h2>Spending by category <span class="muted" style="font-weight:400">· ${esc(monthLabel(ui.month))}</span></h2><div id="donut" class="donut-wrap"></div></section>
       <section class="card chart-card d-month"><h2>Monthly overview</h2><div class="ch" id="ch-six"></div></section>
       <div class="d-rest">
+        ${classic ? `<div class="h2row"><h2>Accounts</h2><button class="link" data-action="tab" data-tab="wallets">Manage</button></div>
+        <div class="accts">${w.accounts.map(acctCard).join('')}</div>` : ''}
         <h2 style="margin-top:20px">This month</h2>${monthSwitcher()}
         <div class="cards">
           <div class="card stat"><div class="label">Income</div><div class="value income">${esc(money(s.income))}</div></div>
           <div class="card stat"><div class="label">Expenses</div><div class="value expense">${esc(money(s.expense))}</div></div>
           <div class="card stat"><div class="label">Net</div><div class="value ${s.net < 0 ? 'expense' : ''}">${esc(money(s.net))}</div></div>
         </div>
-        <h2 style="margin-top:20px">Spending by category</h2>
-        <div class="card">${barsHTML(s)}</div>
         <div class="h2row" style="margin-top:20px"><h2>Recent activity</h2><button class="link" data-action="tab" data-tab="transactions">View all</button></div>
         ${latestHTML()}
       </div>
@@ -582,9 +581,18 @@ function drawHome() {
     }),
   );
   const s = summarize(state, ui.month);
-  const rate = s.income > 0 ? Math.max(0, Math.min(1, s.net / s.income)) : 0;
-  const rg = $('#ring-save');
-  if (rg) rg.innerHTML = ringGauge({ value: rate, text: `${Math.round(rate * 100)}%`, size: 96, variant: graphStyle() });
+  const spendRows = s.byCategory.filter((r) => r.spent > 0).sort((x, y) => y.spent - x.spent);
+  let top = spendRows.slice(0, 5);
+  if (spendRows.length > 5) top = [...top, { id: 'other', other: true, spent: spendRows.slice(5).reduce((t, r) => t + r.spent, 0) }];
+  const rows = top.map((r) => ({ name: r.other ? '➕ More categories' : catLabel(r.id), value: r.spent, share: s.expense ? r.spent / s.expense : 0, color: r.other || r.id === FEE_CAT ? '' : categoryColor(catById(r.id)), other: !!r.other }));
+  const dn = $('#donut');
+  const sig = JSON.stringify([ui.month, rows.map((r) => [r.name, r.value])]);
+  if (dn) {
+    const ch = donutChart({ rows, centerTop: 'Spent', centerText: moneyTile(s.expense), ariaLabel: `Spending by category, ${monthLabel(ui.month)}`, fmtMoney: money, animate: sig !== ui.donutSig });
+    ui.donutSig = sig;
+    dn.innerHTML = `${ch.html}${rows.length ? `<ul class="dn-leg">${rows.map((r) => `<li><i style="background:${r.color ? esc(r.color) : r.other ? 'var(--muted)' : 'var(--s1)'}"></i><span class="dn-n">${esc(r.name)}</span><span class="dn-p">${Math.round(r.share * 100)}%</span></li>`).join('')}</ul>` : '<p class="hint dn-empty">No spending this month yet.</p>'}`;
+    attachTips(dn, ch.tips, tipEl);
+  }
 }
 
 function viewProfile() {
@@ -832,9 +840,52 @@ function insightsFilter() {
   return `<div class="filters scroll" role="group" aria-label="Period">${buttons}</div>${custom}`;
 }
 
+function netWorthData(d) {
+  if (d.bad || !liveAccounts(state).length) return null;
+  const { start, values } = netWorthSeries(state, d.per.from, d.per.to, d.unit);
+  const w = accountSummaries(state);
+  const assets = w.accounts.reduce((t, a) => t + Math.max(0, a.balance), 0);
+  const owed = w.accounts.reduce((t, a) => t + Math.max(0, -a.balance), 0);
+  return { start, values, now: w.total, change: (values.length ? values[values.length - 1] : start) - start, assets, owed, accounts: w.accounts.slice().sort((a, b) => b.balance - a.balance) };
+}
+
+function netWorthHTML(d) {
+  const nw = netWorthData(d);
+  if (!nw) return '';
+  const g = graphStyle();
+  const tile = (label, value, sub, cls = '') =>
+    `<div class="card tile"><div class="label">${label}</div><div class="value ${cls}">${esc(value)}</div><div class="sub">${esc(sub)}</div></div>`;
+  const sign = nw.change > 0 ? '+' : nw.change < 0 ? '−' : '';
+  const colHead = d.unit === 'day' ? 'Day' : 'Month';
+  const list = nw.accounts
+    .map((a) => {
+      const share = nw.assets > 0 ? Math.round((Math.max(0, a.balance) / nw.assets) * 100) : 0;
+      return `<li class="nw-row"><span class="nw-ico">${acctIcon(a)}</span>
+        <span class="nw-main"><span class="nw-name">${esc(a.name)}</span>
+          <span class="bar ${a.balance < 0 ? 'over' : ''}" role="img" aria-label="${esc(a.name)} ${share}% of assets"><span style="width:${share}%"></span></span></span>
+        <span class="nw-val ${a.balance < 0 ? 'expense' : ''}">${esc(money(a.balance))}<small>${a.balance < 0 ? 'Below zero' : `${share}%`}</small></span></li>`;
+    })
+    .join('');
+  return `<h2 class="sect">Net worth</h2>
+    <div class="tiles">
+      ${tile('Net worth', moneyTile(nw.now), `Across ${nw.accounts.length} account${nw.accounts.length === 1 ? '' : 's'}`, nw.now < 0 ? 'expense' : '')}
+      ${tile('Change', `${sign}${moneyTile(Math.abs(nw.change))}`, d.per.name, nw.change < 0 ? 'expense' : nw.change > 0 ? 'income' : '')}
+    </div>
+    ${d.rows.length > 1 ? `<section class="card chart-card gs-${g}">
+      <h2>Net worth over time</h2>
+      <p class="hint" style="margin:-4px 0 6px">The total of all your accounts at the end of each ${d.unit}, starting balances included.</p>
+      <div class="chart" id="ch-networth"></div>
+      ${tableView([colHead, 'Net worth'], d.rows.map((r, i) => [d.labels[i].title, money(nw.values[i])]))}
+    </section>` : ''}
+    <section class="card">
+      <h2>By account</h2>
+      <ul class="nw-list">${list}</ul>
+    </section>`;
+}
+
 function viewInsights() {
   const d = insightsData();
-  const filter = insightsFilter();
+  const filter = insightsFilter() + netWorthHTML(d);
   if (!d.hasData) {
     return `<h1>Insights</h1>${filter}${d.bad ? '' : `<div class="card empty">No income or expenses for ${esc(d.per.name.toLowerCase())} yet. Add a few transactions and your charts will appear here.</div>`}`;
   }
@@ -877,7 +928,7 @@ function viewInsights() {
 function drawInsights() {
   if (ui.tab !== 'insights') return;
   const d = insightsData();
-  if (!d.hasData) return;
+  if (d.bad) return;
   const tipEl = $('#tip');
   hideTip();
   const labels = d.labels;
@@ -888,6 +939,13 @@ function drawInsights() {
     el.innerHTML = html;
     attachTips(el, tips, tipEl);
   };
+  const nw = netWorthData(d);
+  if (nw) {
+    mount('#ch-networth', (width) =>
+      lineChart({ width, months: d.labels.map((l, i) => ({ ...l, value: nw.values[i] })), name: 'Net worth', fmtMoney: money, ariaLabel: 'Net worth over time', variant: graphStyle() }),
+    );
+  }
+  if (!d.hasData) return;
   mount('#ch-monthly', (width) =>
     columnChart({
       width,
@@ -962,6 +1020,7 @@ function viewAuth() {
   </div>`;
 }
 
+const balanceStyle = () => (isBalance(state.settings.balance) ? state.settings.balance : DEFAULT_BALANCE);
 const graphStyle = () => (isGraph(state.settings.graph) ? state.settings.graph : DEFAULT_GRAPH);
 
 function applyTheme() {
@@ -983,6 +1042,13 @@ function viewThemes() {
       </span>
       <span class="th-name">${esc(t.name)}${t.id === cur ? ' <span class="th-on">✓ In use</span>' : ''}</span>
       <span class="th-blurb">${esc(t.blurb)}</span>
+    </button>`).join('')}</div>
+    <h2>Total balance card</h2>
+    <p class="hint">How the balance looks at the top of Home.</p>
+    <div class="graphs">${BALANCE_STYLES.map((b) => `<button class="graphopt balopt ${b.id === balanceStyle() ? 'on' : ''}" data-action="balance" data-id="${b.id}" aria-pressed="${b.id === balanceStyle()}">
+      <span class="bprev bp-${b.id}" aria-hidden="true">${b.id === 'cards' ? '<i></i><i></i><i></i>' : '<i></i><u></u><u></u>'}</span>
+      <span class="th-name">${esc(b.name)}${b.id === balanceStyle() ? ' <span class="th-on">✓ In use</span>' : ''}</span>
+      <span class="th-blurb">${esc(b.blurb)}</span>
     </button>`).join('')}</div>
     <h2>Graph style</h2>
     <p class="hint">How the charts on the Insights tab look. Colours follow the theme you picked.</p>
@@ -1513,6 +1579,12 @@ document.addEventListener('click', async (e) => {
       if (isTheme(id) && id !== state.settings.theme) {
         setState({ ...state, settings: { ...state.settings, theme: id, updatedAt: Date.now() } });
         toast(`${THEMES.find((t) => t.id === id).name} theme on`);
+      }
+      break;
+    case 'balance':
+      if (isBalance(id) && id !== state.settings.balance) {
+        setState({ ...state, settings: { ...state.settings, balance: id, updatedAt: Date.now() } });
+        toast(`${BALANCE_STYLES.find((b) => b.id === id).name} balance on`);
       }
       break;
     case 'graph':

@@ -504,3 +504,26 @@ test('a transfer saved as legs: expense out, income in, fee expense; only the fe
   assert.ok(r.state.transactions.every((t) => t.transferId === tid));
   assert.equal(removeAccount(s, a.id).transactions.every((t) => t.deleted), true);
 });
+
+import { netWorthSeries as _nw } from '../js/store.js';
+test('net worth series: opening balances plus every movement, transfers net to zero except the fee', () => {
+  const s = createState();
+  const a = { id: '11111111-1111-4111-8111-111111111111', name: 'A', opening: 100000, updatedAt: 1 };
+  const b = { id: '22222222-2222-4222-8222-222222222222', name: 'B', opening: -20000, updatedAt: 1 };
+  s.accounts = [a, b];
+  const tid = '33333333-3333-4333-8333-333333333333';
+  const mk = (type, amount, accountId, date, extra = {}) => ({ id: crypto.randomUUID(), type, amount, categoryId: '', accountId, date, note: '', updatedAt: 2, ...extra });
+  s.transactions = [
+    mk('income', 50000, a.id, '2026-11-02'),
+    mk('expense', 10000, b.id, '2026-11-03'),
+    mk('expense', 30000, a.id, '2026-11-04', { transferId: tid, leg: 'out' }),
+    mk('income', 30000, b.id, '2026-11-04', { transferId: tid, leg: 'in' }),
+    mk('expense', 500, a.id, '2026-11-04', { transferId: tid, leg: 'fee' }),
+  ];
+  const r = _nw(s, '2026-11-01', '2026-11-05', 'day');
+  assert.equal(r.start, 80000);
+  assert.deepEqual(r.values, [80000, 130000, 120000, 119500, 119500]);
+  const m = _nw(s, '2026-10-01', '2026-11-30', 'month');
+  assert.equal(m.start, 80000);
+  assert.deepEqual(m.values, [80000, 119500]);
+});

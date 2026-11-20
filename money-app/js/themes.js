@@ -23,5 +23,11 @@ export const GRAPH_STYLES = [
   { id: 'wave', name: 'Waves', blurb: 'Overlapping glowing waves, like a signal trace.' },
   { id: 'glow', name: 'Neon glow', blurb: 'Glowing gradient columns, wave lines and ring gauges.' },
 ];
+export const BALANCE_STYLES = [
+  { id: 'cards', name: 'Stacked cards', blurb: 'Total balance first, then one swipeable card for each account.' },
+  { id: 'classic', name: 'Classic', blurb: 'One total balance card with your accounts listed underneath.' },
+];
+export const DEFAULT_BALANCE = 'cards';
+export const isBalance = (id) => BALANCE_STYLES.some((b) => b.id === id);
 export const DEFAULT_GRAPH = 'classic';
 export const isGraph = (id) => GRAPH_STYLES.some((g) => g.id === id);

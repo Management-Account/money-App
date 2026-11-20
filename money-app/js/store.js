@@ -1,6 +1,6 @@
 import { validEmoji } from './emoji.js';
 import { validColor } from './colors.js';
-import { isTheme, DEFAULT_THEME, isGraph, DEFAULT_GRAPH } from './themes.js';
+import { isTheme, DEFAULT_THEME, isGraph, DEFAULT_GRAPH, isBalance, DEFAULT_BALANCE } from './themes.js';
 // Pure data logic for the money app: no DOM, no storage, so it can be unit-tested
 // in Node and reused later by a sync backend.
 //
@@ -120,7 +120,7 @@ export const DEFAULT_ACCOUNT_ID = 'c0a7f3e2-5b1d-4f6a-9c84-2d3e7a1b6f90';
 export function createState() {
   return {
     version: SCHEMA_VERSION,
-    settings: { currency: 'EGP', theme: 'neon', graph: 'classic', name: '', avatar: '', updatedAt: 0 },
+    settings: { currency: 'EGP', theme: 'neon', graph: 'classic', balance: DEFAULT_BALANCE, name: '', avatar: '', updatedAt: 0 },
     accounts: [{ id: DEFAULT_ACCOUNT_ID, name: 'Cash', opening: 0, updatedAt: 0 }],
     categories: DEFAULT_CATEGORIES.map(([id, name, type]) => ({ id, name, type, budget: 0, updatedAt: 0 })),
     transactions: [],
@@ -158,7 +158,7 @@ export function mergeCollections(local, remote) {
 export function mergeState(local, remote) {
   const ls = local.settings;
   const rs = remote.settings;
-  const settings = rs && (rs.updatedAt ?? 0) > (ls.updatedAt ?? 0) ? { ...ls, ...rs, theme: rs.theme || ls.theme, graph: rs.graph || ls.graph, name: rs.name ?? ls.name ?? '', avatar: rs.avatar ?? ls.avatar ?? '' } : ls;
+  const settings = rs && (rs.updatedAt ?? 0) > (ls.updatedAt ?? 0) ? { ...ls, ...rs, theme: rs.theme || ls.theme, graph: rs.graph || ls.graph, balance: rs.balance || ls.balance || DEFAULT_BALANCE, name: rs.name ?? ls.name ?? '', avatar: rs.avatar ?? ls.avatar ?? '' } : ls;
   return {
     ...local,
     settings,
@@ -241,10 +241,11 @@ export function sanitizeState(obj) {
   const currency = /^[A-Z]{3}$/.test(cur) ? cur : 'EGP';
   const updatedAt = Number.isFinite(obj.settings?.updatedAt) ? obj.settings.updatedAt : 0;
   const graph = isGraph(obj.settings?.graph) ? obj.settings.graph : DEFAULT_GRAPH;
+  const balance = isBalance(obj.settings?.balance) ? obj.settings.balance : DEFAULT_BALANCE;
   const theme = isTheme(obj.settings?.theme) ? obj.settings.theme : DEFAULT_THEME;
   const name = typeof obj.settings?.name === 'string' ? obj.settings.name.trim().slice(0, 40) : '';
   const avatar = validLogo(obj.settings?.avatar);
-  return { version: SCHEMA_VERSION, settings: { currency, theme, graph, name, avatar, updatedAt }, categories, accounts, transactions };
+  return { version: SCHEMA_VERSION, settings: { currency, theme, graph, balance, name, avatar, updatedAt }, categories, accounts, transactions };
 }
 
 // ---------- transfers ----------
@@ -353,6 +354,28 @@ export function accountSummaries(state) {
   const accounts = [...rows.values()];
   for (const r of accounts) r.balance = r.opening + r.income - r.expense;
   return { accounts, total: accounts.reduce((sum, r) => sum + r.balance, 0) };
+}
+
+// Net worth = everything in every account. Series values are the total at the end of each day / month bucket.
+export function netWorthSeries(state, from, to, unit = unitFor(from, to)) {
+  const opening = liveAccounts(state).reduce((sum, a) => sum + (a.opening || 0), 0);
+  const events = [];
+  for (const t of live(state.transactions)) {
+    let d = 0;
+    for (const [, delta] of accountDeltas(state, t)) d += delta;
+    if (d) events.push([t.date, d]);
+  }
+  events.sort((a, b) => a[0].localeCompare(b[0]));
+  let i = 0;
+  let run = opening;
+  const upTo = (end) => {
+    while (i < events.length && events[i][0] <= end) run += events[i++][1];
+    return run;
+  };
+  const start = upTo(addDays(from, -1));
+  const keys = bucketKeys(from, to, unit);
+  const values = keys.map((k) => upTo(unit === 'day' ? k : `${k}-99`));
+  return { start, values, keys };
 }
 
 // Deleting a wallet also deletes the transactions counted in it, so totals stay truthful.
