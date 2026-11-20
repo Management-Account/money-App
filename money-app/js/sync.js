@@ -228,11 +228,12 @@ const toAcc = (a) => ({ id: a.id, name: a.name, opening: a.opening || 0, institu
 const fromTx = (r) => ({
   id: r.id, type: r.type, amount: Number(r.amount), categoryId: r.category_id || '', accountId: r.account_id || '', date: r.date, note: r.note || '',
   ...(r.type === 'transfer' ? { toAccountId: r.to_account_id || '', fee: Number(r.fee) || 0, feeAccountId: r.fee_account_id || '' } : {}),
+  ...(r.transfer_id ? { transferId: r.transfer_id, leg: r.leg || '' } : {}),
   updatedAt: Number(r.updated_at) || 0, ...(r.deleted ? { deleted: true } : {}),
 });
 const toTx = (t) => ({
   id: t.id, type: t.type, amount: t.amount, category_id: t.categoryId || '', account_id: t.accountId || '', date: t.date, note: t.note || '',
-  to_account_id: t.toAccountId || '', fee: t.fee || 0, fee_account_id: t.feeAccountId || '',
+  to_account_id: t.toAccountId || '', fee: t.fee || 0, fee_account_id: t.feeAccountId || '', transfer_id: t.transferId || '', leg: t.leg || '',
   updated_at: t.updatedAt || 0, deleted: !!t.deleted,
 });
 

@@ -6,7 +6,7 @@ import { institutionOf, badgeHTML } from './institutions.js';
 import {
   SCHEMA_VERSION, uid, todayStr, monthKey, shiftMonth, toMinor, fromMinor, formatMoney, createState, live, upsert, remove,
   mergeState, sanitizeState, summarize, toCSV, importCSV, isValidDate, monthsEnding, addDays, daysBetween, unitFor, rangeSeries, balanceBeforeDate, categoryTotalsRange, validLogo,
-  toMinorSigned, liveAccounts, fallbackAccountId, accountIdOf, accountSummaries, removeAccount, FEE_CAT, FEE_NAME,
+  toMinorSigned, liveAccounts, fallbackAccountId, accountIdOf, accountSummaries, removeAccount, FEE_CAT, FEE_NAME, isTransferTx, transferLegs,
 } from './store.js';
 import { getCurrencies } from './currencies.js';
 import { columnChart, lineChart, rankedBars, ringGauge, attachTips, hideTip } from './charts.js';
@@ -42,7 +42,7 @@ function load() {
 
 let state = load();
 // auth: 'signin' | 'signup'
-const ui = { tab: 'home', month: monthKey(todayStr()), q: '', acct: '', ttype: '', txLimit: 50, lastAccount: '', period: '6m', from: '', to: '', auth: 'signin', notice: '', busy: false };
+const ui = { tab: 'home', month: monthKey(todayStr()), q: '', acct: '', ttype: '', txLimit: 50, lastAccount: '', deck: 0, period: '6m', from: '', to: '', auth: 'signin', notice: '', busy: false };
 let deferredInstall = null;
 const syncInfo = { lastAt: 0, error: '' };
 
@@ -243,12 +243,12 @@ function sortedTx() {
 function filteredTx() {
   const q = ui.q.trim().toLowerCase();
   return sortedTx().filter((t) => {
-    if (ui.ttype && t.type !== ui.ttype) return false;
+    if (ui.ttype === 'transfer' ? !isTransferTx(t) : ui.ttype && t.type !== ui.ttype) return false;
     const aid = accountIdOf(state, t);
     const ids = t.type === 'transfer' ? [aid, trTo(t), trFeeAcc(t)] : [aid];
     if (ui.acct && !ids.includes(ui.acct)) return false;
     if (!q) return true;
-    return t.note.toLowerCase().includes(q) || (t.type === 'transfer' ? 'transfer' : catName(t.categoryId).toLowerCase()).includes(q) || ids.some((i) => acctName(i).toLowerCase().includes(q));
+    return t.note.toLowerCase().includes(q) || (isTransferTx(t) ? 'transfer' : catName(t.categoryId).toLowerCase()).includes(q) || ids.some((i) => acctName(i).toLowerCase().includes(q));
   });
 }
 
@@ -260,7 +260,13 @@ function txRow(t, multi, withDate = false) {
   const sign = t.type === 'income' ? '+' : tr ? '' : '−';
   const feeText = tr && t.fee > 0 ? `Fee ${money(t.fee)} from ${acctName(trFeeAcc(t))}` : '';
   const sub = [withDate ? dayLabel(t.date) : '', t.note, tr ? feeText : multi ? acctName(accountIdOf(state, t)) : ''].filter(Boolean).join(' · ');
-  const title = tr ? `🔁 ${acctName(accountIdOf(state, t))} → ${acctName(trTo(t))}` : catLabel(t.categoryId);
+  let title = catLabel(t.categoryId);
+  if (tr) title = `🔁 ${acctName(accountIdOf(state, t))} → ${acctName(trTo(t))}`;
+  else if (t.transferId) {
+    const legs = transferLegs(state, t.transferId);
+    const other = (k) => { const l = legs.find((x) => x.leg === k); return l ? acctName(accountIdOf(state, l)) : ''; };
+    title = t.leg === 'out' ? `🔁 Transfer to ${other('in')}` : t.leg === 'in' ? `🔁 Transfer from ${other('out')}` : '🔁 Transfer fee';
+  }
   return `<button class="row" data-action="edit-tx" data-id="${esc(t.id)}">
     <span><span class="t">${esc(title)}</span>
       ${sub ? `<br><span class="sub">${esc(sub)}</span>` : ''}</span>
@@ -381,20 +387,143 @@ function profileStats() {
   </div>`;
 }
 
+// ---------- balance deck: the total first, then one card per account, swipe left for the next ----------
+
+const hueOf = (str) => { let h = 7; for (const c of String(str)) h = (h * 31 + c.charCodeAt(0)) >>> 0; return h % 360; };
+
+function deckItems(w, s) {
+  const n = w.accounts.length;
+  const items = [{
+    key: 'total', title: 'Total balance', sub: `Across ${n} account${n === 1 ? '' : 's'}`, value: w.total, pill: `${n} account${n === 1 ? '' : 's'}`,
+    icon: `<span class="dc-ico">${ICONS.wallets}</span>`, h1: 262, h2: 200,
+    chips: [`Income +${money(s.income)}`, `Spent −${money(s.expense)}`],
+  }];
+  for (const a of w.accounts) {
+    const h = hueOf(a.id);
+    items.push({
+      key: a.id, title: a.name, sub: (institutionOf(a.institution) || {}).name && institutionOf(a.institution).name !== a.name ? institutionOf(a.institution).name : 'Account', value: a.balance,
+      pill: `${a.count} transaction${a.count === 1 ? '' : 's'}`, icon: acctIcon(a), h1: h, h2: (h + 140) % 360,
+      chips: [`In +${money(a.income)}`, `Out −${money(a.expense)}`],
+    });
+  }
+  return items;
+}
+
+function deckHTML(w, s) {
+  const items = deckItems(w, s);
+  const n = items.length;
+  if (ui.deck >= n || ui.deck < 0) ui.deck = 0;
+  const cards = items.map((it, i) => {
+    const rel = (i - ui.deck + n) % n;
+    return `<article class="dcard" data-i="${i}" data-rel="${Math.min(rel, 3)}" ${rel ? 'aria-hidden="true"' : ''} style="--h1:${it.h1};--h2:${it.h2}">
+      <span class="dc-badge">${it.icon}</span><span class="dc-pill">${esc(it.pill)}</span>
+      <div class="dc-title">${esc(it.title)}</div><div class="dc-sub">${esc(it.sub)}</div>
+      <div class="dc-value ${it.value < 0 ? 'neg' : ''}">${esc(money(it.value))}</div>
+      <div class="dc-chips">${it.chips.map((c) => `<span>${esc(c)}</span>`).join('')}</div>
+    </article>`;
+  }).join('');
+  return `<section class="deck" role="group" aria-roledescription="carousel" aria-label="Balances. Swipe left for the next card" tabindex="0" data-n="${n}">
+    <div class="deck-stage">${cards}</div>
+    ${n > 1 ? `<div class="deck-nav"><button class="icon-pill sm" data-deck="prev" aria-label="Previous card">\u2039</button>
+      <div class="dots">${items.map((it, i) => `<button class="dot ${i === ui.deck ? 'on' : ''}" data-deck="${i}" aria-label="${esc(it.title)}"></button>`).join('')}</div>
+      <button class="icon-pill sm" data-deck="next" aria-label="Next card">\u203a</button></div>` : ''}
+    <div class="deck-foot"><span class="hint" aria-live="polite" id="deck-count">${esc(items[ui.deck].title)}${n > 1 ? ` · ${ui.deck + 1} of ${n}` : ''}</span><button class="link" data-action="tab" data-tab="wallets">Manage accounts</button></div>
+  </section>`;
+}
+
+function mountDeck() {
+  const deck = $('.deck');
+  if (!deck) return;
+  const cards = [...deck.querySelectorAll('.dcard')];
+  const n = cards.length;
+  const counter = $('#deck-count');
+  const dots = [...deck.querySelectorAll('.dot')];
+  const titles = cards.map((c) => c.querySelector('.dc-title').textContent);
+  const layout = () => {
+    cards.forEach((c, i) => {
+      const rel = (i - ui.deck + n) % n;
+      c.dataset.rel = Math.min(rel, 3);
+      if (rel) c.setAttribute('aria-hidden', 'true'); else c.removeAttribute('aria-hidden');
+    });
+    dots.forEach((d, i) => d.classList.toggle('on', i === ui.deck));
+    if (counter) counter.textContent = `${titles[ui.deck]} · ${ui.deck + 1} of ${n}`;
+  };
+  let busy = false;
+  const next = () => {
+    if (n < 2 || busy) return;
+    busy = true;
+    const front = cards[ui.deck];
+    front.classList.add('leaving');
+    ui.deck = (ui.deck + 1) % n;
+    layout();
+    const done = () => { front.classList.add('snap'); front.classList.remove('leaving'); void front.offsetWidth; front.classList.remove('snap'); busy = false; };
+    setTimeout(done, 420);
+  };
+  const prev = () => {
+    if (n < 2 || busy) return;
+    busy = true;
+    ui.deck = (ui.deck - 1 + n) % n;
+    const back = cards[ui.deck];
+    back.classList.add('snap', 'enter');
+    void back.offsetWidth;
+    back.classList.remove('snap', 'enter');
+    layout();
+    setTimeout(() => { busy = false; }, 420);
+  };
+  deck.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-deck]');
+    if (!b) return;
+    const v = b.dataset.deck;
+    if (v === 'next') next();
+    else if (v === 'prev') prev();
+    else { ui.deck = Number(v); layout(); }
+  });
+  deck.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowLeft') { prev(); e.preventDefault(); }
+    if (e.key === 'ArrowRight') { next(); e.preventDefault(); }
+  });
+  // swipe / drag the front card
+  const stage = deck.querySelector('.deck-stage');
+  let sx = null;
+  let dx = 0;
+  stage.addEventListener('pointerdown', (e) => {
+    if (n < 2 || busy) return;
+    sx = e.clientX; dx = 0;
+    stage.setPointerCapture(e.pointerId);
+  });
+  stage.addEventListener('pointermove', (e) => {
+    if (sx === null) return;
+    dx = e.clientX - sx;
+    const front = cards[ui.deck];
+    front.style.transition = 'none';
+    front.style.transform = `translateX(${dx}px) rotate(${dx / 28}deg)`;
+  });
+  const end = () => {
+    if (sx === null) return;
+    const front = cards[ui.deck];
+    sx = null;
+    front.style.transition = '';
+    front.style.transform = '';
+    if (dx < -60) next();
+    else if (dx > 60) prev();
+    dx = 0;
+  };
+  stage.addEventListener('pointerup', end);
+  stage.addEventListener('pointercancel', end);
+}
+
 function viewHome() {
   const s = summarize(state, ui.month);
   const w = accountSummaries(state);
   const rate = s.income > 0 ? Math.max(0, Math.min(1, s.net / s.income)) : 0;
   return `${topbarHTML(s)}<div class="syncline hint" aria-live="polite">${esc(syncText())}</div>
     <div class="dash">
-      <div class="d-hero">${heroHTML(w)}</div>
+      <div class="d-hero">${deckHTML(w, s)}</div>
       <section class="card chart-card d-stats"><h2>Statistics <span class="muted" style="font-weight:400">· This week</span></h2><div class="ch" id="ch-week"></div></section>
       <section class="card d-ring"><h2>Savings rate</h2><div class="ring-row"><span id="ring-save"></span>
         <p class="hint">${s.income > 0 ? `You kept ${Math.round(rate * 100)}% of this month's income.` : 'Add income this month to see how much you keep.'}</p></div></section>
       <section class="card chart-card d-month"><h2>Monthly overview</h2><div class="ch" id="ch-six"></div></section>
       <div class="d-rest">
-        <div class="h2row"><h2>Accounts</h2><button class="link" data-action="tab" data-tab="wallets">Manage</button></div>
-        <div class="accts">${w.accounts.map(acctCard).join('')}</div>
         <h2 style="margin-top:20px">This month</h2>${monthSwitcher()}
         <div class="cards">
           <div class="card stat"><div class="label">Income</div><div class="value income">${esc(money(s.income))}</div></div>
@@ -878,6 +1007,7 @@ function render() {
   $('#main').innerHTML = views[ui.tab]();
   $('#main').classList.toggle('wide', ui.tab === 'home');
   drawHome();
+  mountDeck();
   drawInsights();
   drawGraphPreviews();
 }
@@ -928,12 +1058,36 @@ function walletOptions(selected) {
 
 const liveAccountsCount = () => liveAccounts(state).length;
 
+// The pieces of a transfer: out (source expense), in (destination income) and fee, or a legacy single-record transfer.
+function transferGroup(t) {
+  if (t.type === 'transfer') {
+    return { transferId: uid(), legacy: t, all: [t], from: accountIdOf(state, t), to: trTo(t), amount: t.amount, fee: t.fee || 0, feeAcc: trFeeAcc(t) };
+  }
+  if (!t.transferId) return null;
+  const all = transferLegs(state, t.transferId);
+  const byLeg = Object.fromEntries(all.map((l) => [l.leg, l]));
+  const base = byLeg.out || byLeg.in || t;
+  const from = accountIdOf(state, base === byLeg.in ? { ...base, accountId: '' } : base);
+  const g = {
+    transferId: t.transferId, all, byLeg,
+    from: byLeg.out ? accountIdOf(state, byLeg.out) : from,
+    to: byLeg.in ? accountIdOf(state, byLeg.in) : '',
+    amount: base.amount,
+    fee: byLeg.fee ? byLeg.fee.amount : 0,
+  };
+  g.feeAcc = byLeg.fee ? accountIdOf(state, byLeg.fee) : g.from;
+  return g;
+}
+
 function openTxDialog(id) {
   const existing = id ? live(state.transactions).find((t) => t.id === id) : null;
   const lastOk = liveAccounts(state).some((a) => a.id === ui.lastAccount);
-  const tx = existing
-    ? { ...existing, accountId: accountIdOf(state, existing) }
-    : { id: uid(), type: 'expense', amount: 0, categoryId: '', accountId: lastOk ? ui.lastAccount : fallbackAccountId(state), date: todayStr(), note: '' };
+  const group = existing ? transferGroup(existing) : null;
+  const tx = group
+    ? { id: existing.id, type: 'transfer', amount: group.amount, categoryId: '', accountId: group.from, toAccountId: group.to, fee: group.fee, feeAccountId: group.feeAcc, date: existing.date, note: existing.note || '' }
+    : existing
+      ? { ...existing, accountId: accountIdOf(state, existing) }
+      : { id: uid(), type: 'expense', amount: 0, categoryId: '', accountId: lastOk ? ui.lastAccount : fallbackAccountId(state), date: todayStr(), note: '' };
   openDialog(
     `<form>
       <h3>${existing ? 'Edit transaction' : 'New transaction'}</h3>
@@ -997,7 +1151,8 @@ function openTxDialog(id) {
         const accountId = fd.get('accountId');
         if (!liveAccounts(state).some((a) => a.id === accountId)) return 'Pick an account.';
         const type = fd.get('type');
-        let rec = { id: tx.id, type, amount, categoryId: type === 'transfer' ? '' : fd.get('categoryId') || '', accountId, date, note: (fd.get('note') || '').trim() };
+        const note = (fd.get('note') || '').trim();
+        let txs = state.transactions;
         if (type === 'transfer') {
           const toAccountId = fd.get('toAccountId');
           if (liveAccountsCount() < 2) return 'You need at least two accounts to make a transfer. Add another account first.';
@@ -1008,14 +1163,27 @@ function openTxDialog(id) {
           if (!Number.isFinite(fee) || fee < 0) return 'Enter the fee like 5 or 2.50, or leave it empty.';
           const feeAccountId = fd.get('feeAccountId');
           if (fee > 0 && !liveAccounts(state).some((a) => a.id === feeAccountId)) return 'Pick the account the fee is taken from.';
-          rec = { ...rec, toAccountId, fee, feeAccountId: fee > 0 ? feeAccountId : '' };
+          // Saved as an expense in the source account, an income in the destination account and (if any) a fee expense.
+          const tid = group ? group.transferId : uid();
+          if (existing && !group) txs = remove(txs, existing.id);
+          if (group?.legacy) txs = remove(txs, group.legacy.id);
+          const leg = (kind, ty, amt, acc) => ({ id: group?.byLeg?.[kind]?.id || uid(), type: ty, amount: amt, categoryId: '', accountId: acc, date, note, transferId: tid, leg: kind });
+          txs = upsert(txs, leg('out', 'expense', amount, accountId));
+          txs = upsert(txs, leg('in', 'income', amount, toAccountId));
+          if (fee > 0) txs = upsert(txs, leg('fee', 'expense', fee, feeAccountId));
+          else if (group?.byLeg?.fee) txs = remove(txs, group.byLeg.fee.id);
+        } else {
+          if (group) for (const l of group.all) txs = remove(txs, l.id);
+          txs = upsert(txs, { id: group ? uid() : tx.id, type, amount, categoryId: fd.get('categoryId') || '', accountId, date, note });
         }
         ui.lastAccount = accountId;
         ui.month = monthKey(date);
-        setState({ ...state, transactions: upsert(state.transactions, rec) });
+        setState({ ...state, transactions: txs });
       },
       onDelete() {
-        setState({ ...state, transactions: remove(state.transactions, tx.id) });
+        let txs = state.transactions;
+        for (const l of group ? group.all : [tx]) txs = remove(txs, l.id);
+        setState({ ...state, transactions: txs });
         toast('Transaction deleted');
       },
     },

@@ -668,7 +668,7 @@ button.acct:hover { border-color: rgb(var(--gc) / .55); box-shadow: 0 0 26px rgb
   .dash { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-areas: "hero ring" "stats month" "rest rest"; align-items: stretch; }
   .dash .d-hero { grid-area: hero; } .dash .d-ring { grid-area: ring; } .dash .d-stats { grid-area: stats; }
   .dash .d-month { grid-area: month; } .dash .d-rest { grid-area: rest; }
-  .dash .d-hero > .hero, .dash .d-ring { height: 100%; }
+  .dash .d-ring { height: 100%; }
   .dash .d-hero > .hero { display: flex; flex-direction: column; justify-content: center; }
   .dash .d-ring .ring-row { height: calc(100% - 28px); }
 }
@@ -709,3 +709,43 @@ button.acct:hover { border-color: rgb(var(--gc) / .55); box-shadow: 0 0 26px rgb
 .alert-list .over { color: var(--expense); } .alert-list .near { color: var(--warn); }
 .row .amt.transfer { color: var(--muted); }
 .field[hidden] { display: none !important; }
+
+/* ---------- balance deck (stacked cards, swipe left) ---------- */
+.deck { user-select: none; -webkit-user-select: none; }
+.deck:focus-visible { outline: 2px solid var(--accent); outline-offset: 6px; border-radius: 28px; }
+.deck-stage { position: relative; height: 252px; overflow-x: clip; overflow-y: visible; touch-action: pan-y; cursor: grab; }
+.deck-stage:active { cursor: grabbing; }
+.dcard { position: absolute; left: 0; right: 0; top: 0; height: 212px; padding: 20px 22px; border-radius: 30px 30px 26px 26px; color: #fff; overflow: hidden;
+  display: flex; flex-direction: column; border: 1px solid rgba(255, 255, 255, .14); box-shadow: 0 18px 40px rgba(0, 0, 0, .45);
+  background:
+    radial-gradient(55% 75% at 8% 100%, hsl(var(--h2) 80% 34% / .9), transparent 72%),
+    radial-gradient(48% 70% at 52% 8%, hsl(var(--h1) 78% 36% / .85), transparent 72%),
+    radial-gradient(50% 80% at 100% 92%, hsl(var(--h1) 70% 22% / .9), transparent 75%),
+    #0a0a14;
+  transform-origin: 50% 100%; transition: transform .42s cubic-bezier(.22, .8, .3, 1), opacity .42s, filter .42s; will-change: transform; }
+.dcard[data-rel="0"] { transform: none; z-index: 4; }
+.dcard[data-rel="1"] { transform: translateY(20px) scale(.93); z-index: 3; filter: brightness(.85); }
+.dcard[data-rel="2"] { transform: translateY(40px) scale(.86); z-index: 2; filter: brightness(.7); }
+.dcard[data-rel="3"] { transform: translateY(40px) scale(.86); z-index: 1; opacity: 0; filter: brightness(.7); }
+.dcard.leaving { transform: translateX(-125%) rotate(-9deg) !important; opacity: 0; z-index: 6 !important; transition-duration: .4s; }
+.dcard.enter { transform: translateX(-125%) rotate(-9deg) !important; opacity: 0; z-index: 6 !important; }
+.dcard.snap { transition: none !important; }
+.dc-badge { display: inline-flex; width: 52px; height: 52px; }
+.dc-badge .ibadge, .dc-badge .acct-ico { width: 52px; height: 52px; border-radius: 50%; }
+.dc-ico { display: grid; place-items: center; width: 52px; height: 52px; border-radius: 50%; background: rgba(255, 255, 255, .16); border: 1px solid rgba(255, 255, 255, .25); }
+.dc-ico svg { width: 26px; height: 26px; }
+.dc-pill { position: absolute; top: 20px; right: 20px; padding: 6px 14px; border-radius: 999px; font-size: .8rem; background: rgba(0, 0, 0, .35); border: 1px solid rgba(255, 215, 120, .7); }
+.dc-title { margin-top: auto; font-size: 1.3rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dc-sub { color: rgba(255, 255, 255, .72); font-size: .92rem; margin-bottom: 4px; }
+.dc-value { font-size: clamp(1.6rem, 4.6vw, 2.2rem); font-weight: 750; letter-spacing: -.02em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dc-value.neg { color: #ffb4b4; }
+.dc-chips { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.dc-chips span { padding: 5px 12px; border-radius: 999px; font-size: .78rem; background: rgba(255, 255, 255, .09); border: 1px solid rgba(255, 255, 255, .16); color: rgba(255, 255, 255, .82); }
+.deck-nav { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 6px; }
+.icon-pill.sm { width: 34px; height: 34px; font-size: 1.3rem; line-height: 1; }
+.dots { display: flex; gap: 7px; flex-wrap: wrap; justify-content: center; }
+.dot { width: 9px; height: 9px; padding: 0; border-radius: 50%; border: 0; background: var(--line-strong); }
+.dot.on { background: var(--accent); width: 22px; border-radius: 6px; transition: width .25s; }
+.deck-foot { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; gap: 10px; }
+.deck-foot .hint { margin: 0; }
+@media (prefers-reduced-motion: reduce) { .dcard { transition-duration: .01s; } }

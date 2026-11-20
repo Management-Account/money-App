@@ -213,6 +213,9 @@ export function sanitizeState(obj) {
       accountId: typeof t.accountId === 'string' && UUID_RE.test(t.accountId) ? t.accountId : '',
       date: t.date,
       note: typeof t.note === 'string' ? t.note.slice(0, 200) : '',
+      ...(t.type !== 'transfer' && typeof t.transferId === 'string' && UUID_RE.test(t.transferId) && ['out', 'in', 'fee'].includes(t.leg)
+        ? { transferId: t.transferId, leg: t.leg }
+        : {}),
       ...(t.type === 'transfer'
         ? {
             toAccountId: typeof t.toAccountId === 'string' && UUID_RE.test(t.toAccountId) ? t.toAccountId : '',
@@ -251,10 +254,16 @@ export const FEE_NAME = 'Transfer fees';
 
 // Money-in / money-out of one transaction as seen by the whole budget.
 export function flow(t) {
+  // A transfer is saved as an expense in the source account, an income in the destination account and, if there
+  // is a fee, a fee expense. They keep balances right; only the fee counts as spending in the budget analytics.
+  if (t.transferId) return t.leg === 'fee' ? { income: 0, expense: t.amount, feeOnly: true } : { income: 0, expense: 0, feeOnly: true };
   if (t.type === 'income') return { income: t.amount, expense: 0, feeOnly: false };
   if (t.type === 'transfer') return { income: 0, expense: t.fee || 0, feeOnly: true };
   return { income: 0, expense: t.amount, feeOnly: false };
 }
+export const isTransferTx = (t) => t.type === 'transfer' || !!t.transferId;
+export const transferLegs = (state, transferId) => live(state.transactions).filter((t) => t.transferId === transferId);
+
 export const netOf = (t) => { const f = flow(t); return f.income - f.expense; };
 
 function liveAccountId(state, id) {
@@ -349,7 +358,9 @@ export function accountSummaries(state) {
 // Deleting a wallet also deletes the transactions counted in it, so totals stay truthful.
 export function removeAccount(state, id) {
   const t = now();
-  const doomed = new Set(live(state.transactions).filter((x) => accountIdOf(state, x) === id || (x.type === 'transfer' && (x.toAccountId === id || x.feeAccountId === id))).map((x) => x.id));
+  const hit = live(state.transactions).filter((x) => accountIdOf(state, x) === id || (x.type === 'transfer' && (x.toAccountId === id || x.feeAccountId === id)));
+  const links = new Set(hit.map((x) => x.transferId).filter(Boolean));
+  const doomed = new Set([...hit, ...live(state.transactions).filter((x) => x.transferId && links.has(x.transferId))].map((x) => x.id));
   return {
     ...state,
     accounts: remove(state.accounts, id),
@@ -417,8 +428,8 @@ export function categoryTotalsRange(state, from, to, type = 'expense') {
     if (!inRange(t, from, to)) continue;
     const f = flow(t);
     const amt = type === 'income' ? f.income : f.expense;
-    if (!(t.type === type || (t.type === 'transfer' && type === 'expense' && amt > 0)) || amt <= 0) continue;
-    const key = t.type === 'transfer' ? FEE_CAT : t.categoryId;
+    if (amt <= 0) continue;
+    const key = f.feeOnly ? FEE_CAT : t.categoryId;
     totals.set(key, (totals.get(key) || 0) + amt);
   }
   return [...totals].map(([id, total]) => ({ id, name: id === FEE_CAT ? FEE_NAME : names.get(id) || 'Uncategorized', total })).sort((a, b) => b.total - a.total);
@@ -461,8 +472,8 @@ export function categoryTotals(state, months, type = 'expense') {
     if (!inRange.has(monthKey(t.date))) continue;
     const f = flow(t);
     const amt = type === 'income' ? f.income : f.expense;
-    if (!(t.type === type || (t.type === 'transfer' && type === 'expense')) || amt <= 0) continue;
-    const key = t.type === 'transfer' ? FEE_CAT : t.categoryId;
+    if (amt <= 0) continue;
+    const key = f.feeOnly ? FEE_CAT : t.categoryId;
     totals.set(key, (totals.get(key) || 0) + amt);
   }
   return [...totals]
@@ -484,11 +495,11 @@ export function toCSV(state) {
     .slice()
     .sort((a, b) => a.date.localeCompare(b.date))
     .map((t) =>
-      [t.date, t.type, cats.get(t.categoryId) || '', fromMinor(t.amount), t.note, accs.get(accountIdOf(state, t)) || '', t.type === 'transfer' ? accs.get(liveAccountId(state, t.toAccountId)) || '' : '', t.type === 'transfer' && t.fee ? fromMinor(t.fee) : '', t.type === 'transfer' && t.fee ? accs.get(t.feeAccountId ? liveAccountId(state, t.feeAccountId) : accountIdOf(state, t)) || '' : '']
+      [t.date, t.type, cats.get(t.categoryId) || '', fromMinor(t.amount), t.note, accs.get(accountIdOf(state, t)) || '', t.type === 'transfer' ? accs.get(liveAccountId(state, t.toAccountId)) || '' : '', t.type === 'transfer' && t.fee ? fromMinor(t.fee) : '', t.type === 'transfer' && t.fee ? accs.get(t.feeAccountId ? liveAccountId(state, t.feeAccountId) : accountIdOf(state, t)) || '' : '', t.transferId || '', t.transferId ? t.leg : '']
         .map(csvEscape)
         .join(','),
     );
-  return ['date,type,category,amount,note,account,to_account,fee,fee_account', ...rows].join('\n') + '\n';
+  return ['date,type,category,amount,note,account,to_account,fee,fee_account,transfer_id,leg', ...rows].join('\n') + '\n';
 }
 
 export function parseCSV(text) {
@@ -540,6 +551,8 @@ export function importCSV(state, text) {
   const iTo = col('to_account');
   const iFee = col('fee');
   const iFeeAcc = col('fee_account');
+  const iTid = col('transfer_id');
+  const iLeg = col('leg');
 
   let categories = state.categories.slice();
   let accounts = (state.accounts || []).slice();
@@ -551,7 +564,7 @@ export function importCSV(state, text) {
     live(state.transactions).map((t) => {
       const c = categories.find((x) => x.id === t.categoryId);
       const extra = t.type === 'transfer' ? [accNameOf(liveAccountId(state, t.toAccountId)), t.fee || 0, accNameOf(t.feeAccountId ? liveAccountId(state, t.feeAccountId) : accountIdOf(state, t))] : [];
-      return [t.date, t.type, (c?.name || '').toLowerCase(), t.amount, t.note, accNameOf(accountIdOf(state, t)), ...extra].join('|');
+      return [t.date, t.type, (c?.name || '').toLowerCase(), t.amount, t.note, accNameOf(accountIdOf(state, t)), ...extra, t.transferId || '', t.leg || ''].join('|');
     }),
   );
   const added = [];
@@ -589,7 +602,10 @@ export function importCSV(state, text) {
       fee = Number.isFinite(f) && f > 0 ? f : 0;
       feeAccountId = fee > 0 ? accIdByName(iFeeAcc >= 0 ? (r[iFeeAcc] || '').trim() : '', accountId) : '';
     }
-    const key = [date, type, catName.toLowerCase(), amount, note, accNameOf(accountId), ...(type === 'transfer' ? [accNameOf(toAccountId), fee, accNameOf(feeAccountId || accountId)] : [])].join('|');
+    const tid = iTid >= 0 ? (r[iTid] || '').trim() : '';
+    const leg = iLeg >= 0 ? (r[iLeg] || '').trim() : '';
+    const link = type !== 'transfer' && UUID_RE.test(tid) && ['out', 'in', 'fee'].includes(leg) ? { transferId: tid, leg } : {};
+    const key = [date, type, catName.toLowerCase(), amount, note, accNameOf(accountId), ...(type === 'transfer' ? [accNameOf(toAccountId), fee, accNameOf(feeAccountId || accountId)] : []), link.transferId || '', link.leg || ''].join('|');
     if (seen.has(key)) {
       skipped++;
       continue;
@@ -606,7 +622,7 @@ export function importCSV(state, text) {
       }
       categoryId = c.id;
     }
-    added.push({ id: uid(), type, amount, categoryId, accountId, date, note: note.slice(0, 200), ...(type === 'transfer' ? { toAccountId, fee, feeAccountId } : {}), updatedAt: now() });
+    added.push({ id: uid(), type, amount, categoryId, accountId, date, note: note.slice(0, 200), ...(type === 'transfer' ? { toAccountId, fee, feeAccountId } : {}), ...link, updatedAt: now() });
   }
   return { state: { ...state, categories, accounts, transactions: [...state.transactions, ...added] }, added: added.length, skipped };
 }

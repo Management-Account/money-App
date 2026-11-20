@@ -123,3 +123,4 @@ Every colour in `styles.css` comes from variables on `:root`. A theme is one blo
 - Three more themes: **Neumorphic Mint**, **Neumorphic Indigo** and **Neon Knobs** (v18).
 - v19: dashboard cards aligned in an equal 2x2 grid; changes now sync within a fraction of a second (and on tab hide / page close).
 - v20: **Transfers** between accounts with optional fee and a choice of which account pays the fee. Re-run supabase/schema.sql once.
+- v21: transfers are saved as an expense in the source account, an income in the destination account and a fee expense; Home balance cards: Total first, then one stacked card per account, swipe left for the next. Re-run supabase/schema.sql once.
