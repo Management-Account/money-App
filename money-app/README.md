@@ -121,3 +121,4 @@ Every colour in `styles.css` comes from variables on `:root`. A theme is one blo
 - **Liquid Glass** theme added in the Themes tab.
 - Run `supabase/schema.sql` once more so the `display_name` and `avatar` columns exist (safe, keeps your data).
 - Three more themes: **Neumorphic Mint**, **Neumorphic Indigo** and **Neon Knobs** (v18).
+- v19: dashboard cards aligned in an equal 2x2 grid; changes now sync within a fraction of a second (and on tab hide / page close).

@@ -67,7 +67,7 @@ let inflight = null;
 let again = false;
 let syncTimer;
 
-function scheduleSync(delay = 1500) {
+function scheduleSync(delay = 150) {
   if (!cloudEnabled || !getSession()) return;
   clearTimeout(syncTimer);
   syncTimer = setTimeout(runSync, delay);
@@ -374,15 +374,6 @@ function profileStats() {
   </div>`;
 }
 
-function profileCardHTML() {
-  return `<section class="card prof-card" aria-label="Profile">
-    <span class="ring-avatar">${avatarHTML('xl')}</span>
-    <div class="prof-name">${esc(profName())}</div><div class="prof-sub">${esc(userHandle())}</div>
-    ${profileStats()}
-    <button class="btn" data-action="edit-profile">Edit profile</button>
-  </section>`;
-}
-
 function viewHome() {
   const s = summarize(state, ui.month);
   const w = accountSummaries(state);
@@ -394,7 +385,6 @@ function viewHome() {
       <section class="card d-ring"><h2>Savings rate</h2><div class="ring-row"><span id="ring-save"></span>
         <p class="hint">${s.income > 0 ? `You kept ${Math.round(rate * 100)}% of this month's income.` : 'Add income this month to see how much you keep.'}</p></div></section>
       <section class="card chart-card d-month"><h2>Monthly overview</h2><div class="ch" id="ch-six"></div></section>
-      ${profileCardHTML()}
       <div class="d-rest">
         <div class="h2row"><h2>Accounts</h2><button class="link" data-action="tab" data-tab="wallets">Manage</button></div>
         <div class="accts">${w.accounts.map(acctCard).join('')}</div>
@@ -1560,7 +1550,9 @@ if (cloudEnabled) {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') runSync();
   });
-  setInterval(() => document.visibilityState === 'visible' && runSync(), 60_000);
+  setInterval(() => document.visibilityState === 'visible' && runSync(), 20_000);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') runSync(); });
+  window.addEventListener('pagehide', () => runSync());
 }
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
