@@ -29,5 +29,11 @@ export const BALANCE_STYLES = [
 ];
 export const DEFAULT_BALANCE = 'cards';
 export const isBalance = (id) => BALANCE_STYLES.some((b) => b.id === id);
+export const ACCOUNT_LIST_OPTIONS = [
+  { id: 'hide', name: 'Hidden', blurb: 'Home stays short. Open accounts from the balance card or the Accounts tab.' },
+  { id: 'show', name: 'Show at the bottom', blurb: 'A grid of account cards under the dashboard, one for each account.' },
+];
+export const DEFAULT_ACCOUNT_LIST = 'hide';
+export const isAccountList = (id) => ACCOUNT_LIST_OPTIONS.some((o) => o.id === id);
 export const DEFAULT_GRAPH = 'classic';
 export const isGraph = (id) => GRAPH_STYLES.some((g) => g.id === id);

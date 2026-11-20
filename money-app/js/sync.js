@@ -257,7 +257,7 @@ export async function syncNow(state) {
     categories: rc.map(fromCat),
     accounts: ra.map(fromAcc),
     transactions: rt.map(fromTx),
-    settings: rs[0] ? { currency: rs[0].currency, theme: rs[0].theme || undefined, graph: rs[0].graph || undefined, balance: rs[0].balance_style || undefined, name: rs[0].display_name ?? undefined, avatar: rs[0].avatar ?? undefined, updatedAt: Number(rs[0].updated_at) || 0 } : undefined,
+    settings: rs[0] ? { currency: rs[0].currency, theme: rs[0].theme || undefined, graph: rs[0].graph || undefined, balance: rs[0].balance_style || undefined, accountList: rs[0].accounts_list || undefined, name: rs[0].display_name ?? undefined, avatar: rs[0].avatar ?? undefined, updatedAt: Number(rs[0].updated_at) || 0 } : undefined,
   };
   const merged = mergeState(state, remote);
 
@@ -269,7 +269,7 @@ export async function syncNow(state) {
   await push('accounts', newer(merged.accounts, remote.accounts).map(toAcc));
   await push('transactions', newer(merged.transactions, remote.transactions).map(toTx));
   if (merged.settings.updatedAt > (remote.settings?.updatedAt ?? 0)) {
-    await push('settings', [{ currency: merged.settings.currency, theme: merged.settings.theme || 'neon', graph: merged.settings.graph || 'classic', balance_style: merged.settings.balance || 'cards', display_name: merged.settings.name || '', avatar: merged.settings.avatar || '', updated_at: merged.settings.updatedAt }]);
+    await push('settings', [{ currency: merged.settings.currency, theme: merged.settings.theme || 'neon', graph: merged.settings.graph || 'classic', balance_style: merged.settings.balance || 'cards', accounts_list: merged.settings.accountList || 'hide', display_name: merged.settings.name || '', avatar: merged.settings.avatar || '', updated_at: merged.settings.updatedAt }]);
   }
   return merged;
 }

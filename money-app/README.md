@@ -128,3 +128,4 @@ Every colour in `styles.css` comes from variables on `:root`. A theme is one blo
 - v25: Home spending-by-category donut replaces the savings-rate card; Net worth tiles trimmed; Themes: choose Stacked cards or Classic total balance card. Re-run supabase/schema.sql once.
 - v26: smoother spending donut (continuous ring, sweep-in animation, soft hover).
 - v27: Classic balance layout now uses the same card style (total card + a grid of account cards); top row aligned in both layouts.
+- v28: Classic balance = single flat card with no accounts list; new Themes option 'Accounts list on Home' (hidden by default) works with either balance style. Re-run supabase/schema.sql once.

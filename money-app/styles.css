@@ -811,3 +811,7 @@ button.acct:hover { border-color: rgb(var(--gc) / .55); box-shadow: 0 0 26px rgb
 .d-ring .donut-wrap { flex: 1; align-content: center; }
 @media (max-width: 859px) { .dgrid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; } .dgrid .dcard[data-small] { min-height: 176px; } .dgrid .dcard[data-small] .dc-pill { display: none; } }
 .dash > .card, .dash > .d-hero { margin: 0; }
+
+.bp-list-show { display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: 38px 22px; gap: 6px; align-content: center; padding: 0 12%; }
+.bp-list-show i { grid-column: 1 / -1; width: 100%; height: 100%; } .bp-list-show u { width: 100%; height: 100%; opacity: .4; text-decoration: none; }
+.bp-list-hide i { width: 70%; height: 46px; }

@@ -1,6 +1,6 @@
 import { validEmoji } from './emoji.js';
 import { validColor } from './colors.js';
-import { isTheme, DEFAULT_THEME, isGraph, DEFAULT_GRAPH, isBalance, DEFAULT_BALANCE } from './themes.js';
+import { isTheme, DEFAULT_THEME, isGraph, DEFAULT_GRAPH, isBalance, DEFAULT_BALANCE, isAccountList, DEFAULT_ACCOUNT_LIST } from './themes.js';
 // Pure data logic for the money app: no DOM, no storage, so it can be unit-tested
 // in Node and reused later by a sync backend.
 //
@@ -120,7 +120,7 @@ export const DEFAULT_ACCOUNT_ID = 'c0a7f3e2-5b1d-4f6a-9c84-2d3e7a1b6f90';
 export function createState() {
   return {
     version: SCHEMA_VERSION,
-    settings: { currency: 'EGP', theme: 'neon', graph: 'classic', balance: DEFAULT_BALANCE, name: '', avatar: '', updatedAt: 0 },
+    settings: { currency: 'EGP', theme: 'neon', graph: 'classic', balance: DEFAULT_BALANCE, accountList: DEFAULT_ACCOUNT_LIST, name: '', avatar: '', updatedAt: 0 },
     accounts: [{ id: DEFAULT_ACCOUNT_ID, name: 'Cash', opening: 0, updatedAt: 0 }],
     categories: DEFAULT_CATEGORIES.map(([id, name, type]) => ({ id, name, type, budget: 0, updatedAt: 0 })),
     transactions: [],
@@ -158,7 +158,7 @@ export function mergeCollections(local, remote) {
 export function mergeState(local, remote) {
   const ls = local.settings;
   const rs = remote.settings;
-  const settings = rs && (rs.updatedAt ?? 0) > (ls.updatedAt ?? 0) ? { ...ls, ...rs, theme: rs.theme || ls.theme, graph: rs.graph || ls.graph, balance: rs.balance || ls.balance || DEFAULT_BALANCE, name: rs.name ?? ls.name ?? '', avatar: rs.avatar ?? ls.avatar ?? '' } : ls;
+  const settings = rs && (rs.updatedAt ?? 0) > (ls.updatedAt ?? 0) ? { ...ls, ...rs, theme: rs.theme || ls.theme, graph: rs.graph || ls.graph, balance: rs.balance || ls.balance || DEFAULT_BALANCE, accountList: rs.accountList || ls.accountList || DEFAULT_ACCOUNT_LIST, name: rs.name ?? ls.name ?? '', avatar: rs.avatar ?? ls.avatar ?? '' } : ls;
   return {
     ...local,
     settings,
@@ -242,10 +242,11 @@ export function sanitizeState(obj) {
   const updatedAt = Number.isFinite(obj.settings?.updatedAt) ? obj.settings.updatedAt : 0;
   const graph = isGraph(obj.settings?.graph) ? obj.settings.graph : DEFAULT_GRAPH;
   const balance = isBalance(obj.settings?.balance) ? obj.settings.balance : DEFAULT_BALANCE;
+  const accountList = isAccountList(obj.settings?.accountList) ? obj.settings.accountList : DEFAULT_ACCOUNT_LIST;
   const theme = isTheme(obj.settings?.theme) ? obj.settings.theme : DEFAULT_THEME;
   const name = typeof obj.settings?.name === 'string' ? obj.settings.name.trim().slice(0, 40) : '';
   const avatar = validLogo(obj.settings?.avatar);
-  return { version: SCHEMA_VERSION, settings: { currency, theme, graph, balance, name, avatar, updatedAt }, categories, accounts, transactions };
+  return { version: SCHEMA_VERSION, settings: { currency, theme, graph, balance, accountList, name, avatar, updatedAt }, categories, accounts, transactions };
 }
 
 // ---------- transfers ----------

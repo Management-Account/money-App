@@ -1,7 +1,7 @@
 import { pickerHTML, mountPicker } from './picker.js';
 import { EMOJI_GROUPS, categoryEmoji, suggestEmoji, validEmoji } from './emoji.js';
 import { categoryColor, nextColor, validColor, PALETTE } from './colors.js';
-import { THEMES, DEFAULT_THEME, isTheme, themeMeta, GRAPH_STYLES, DEFAULT_GRAPH, isGraph, BALANCE_STYLES, DEFAULT_BALANCE, isBalance } from './themes.js';
+import { THEMES, DEFAULT_THEME, isTheme, themeMeta, GRAPH_STYLES, DEFAULT_GRAPH, isGraph, BALANCE_STYLES, DEFAULT_BALANCE, isBalance, ACCOUNT_LIST_OPTIONS, DEFAULT_ACCOUNT_LIST, isAccountList } from './themes.js';
 import { institutionOf, badgeHTML } from './institutions.js';
 import {
   SCHEMA_VERSION, uid, todayStr, monthKey, shiftMonth, toMinor, fromMinor, formatMoney, createState, live, upsert, remove,
@@ -555,7 +555,7 @@ function viewHome() {
       <section class="card d-ring"><h2>Spending by category <span class="muted" style="font-weight:400">· ${esc(monthLabel(ui.month))}</span></h2><div id="donut" class="donut-wrap"></div></section>
       <section class="card chart-card d-month"><h2>Monthly overview</h2><div class="ch" id="ch-six"></div></section>
       <div class="d-rest">
-        ${classic ? classicAccountsHTML(w, s) : ''}
+        ${accountListMode() === 'show' ? `${classicAccountsHTML(w, s)}<div style="height:20px"></div>` : ''}
         <h2 style="margin-top:20px">This month</h2>${monthSwitcher()}
         <div class="cards">
           <div class="card stat"><div class="label">Income</div><div class="value income">${esc(money(s.income))}</div></div>
@@ -1035,6 +1035,7 @@ function viewAuth() {
   </div>`;
 }
 
+const accountListMode = () => (isAccountList(state.settings.accountList) ? state.settings.accountList : DEFAULT_ACCOUNT_LIST);
 const balanceStyle = () => (isBalance(state.settings.balance) ? state.settings.balance : DEFAULT_BALANCE);
 const graphStyle = () => (isGraph(state.settings.graph) ? state.settings.graph : DEFAULT_GRAPH);
 
@@ -1064,6 +1065,13 @@ function viewThemes() {
       <span class="bprev bp-${b.id}" aria-hidden="true">${b.id === 'cards' ? '<i></i><i></i><i></i>' : '<i></i><u></u><u></u>'}</span>
       <span class="th-name">${esc(b.name)}${b.id === balanceStyle() ? ' <span class="th-on">✓ In use</span>' : ''}</span>
       <span class="th-blurb">${esc(b.blurb)}</span>
+    </button>`).join('')}</div>
+    <h2>Accounts list on Home</h2>
+    <p class="hint">Show or hide the list of account cards at the bottom of Home. It works with either balance card style.</p>
+    <div class="graphs">${ACCOUNT_LIST_OPTIONS.map((o) => `<button class="graphopt balopt ${o.id === accountListMode() ? 'on' : ''}" data-action="acclist" data-id="${o.id}" aria-pressed="${o.id === accountListMode()}">
+      <span class="bprev bp-list-${o.id}" aria-hidden="true">${o.id === 'show' ? '<i></i><u></u><u></u><u></u>' : '<i></i>'}</span>
+      <span class="th-name">${esc(o.name)}${o.id === accountListMode() ? ' <span class="th-on">✓ In use</span>' : ''}</span>
+      <span class="th-blurb">${esc(o.blurb)}</span>
     </button>`).join('')}</div>
     <h2>Graph style</h2>
     <p class="hint">How the charts on the Insights tab look. Colours follow the theme you picked.</p>
@@ -1605,6 +1613,12 @@ document.addEventListener('click', async (e) => {
       if (isTheme(id) && id !== state.settings.theme) {
         setState({ ...state, settings: { ...state.settings, theme: id, updatedAt: Date.now() } });
         toast(`${THEMES.find((t) => t.id === id).name} theme on`);
+      }
+      break;
+    case 'acclist':
+      if (isAccountList(id) && id !== state.settings.accountList) {
+        setState({ ...state, settings: { ...state.settings, accountList: id, updatedAt: Date.now() } });
+        toast(id === 'show' ? 'Accounts list shown on Home' : 'Accounts list hidden');
       }
       break;
     case 'balance':
