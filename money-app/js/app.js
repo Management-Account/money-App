@@ -409,18 +409,34 @@ function deckItems(w, s) {
   return items;
 }
 
+function dcardHTML(it, attrs) {
+  return `<article class="dcard" ${attrs} data-key="${esc(it.key)}" style="--x1:${it.x1}%;--x2:${it.x2}%">
+    <span class="dc-badge">${it.icon}</span><span class="dc-pill">${esc(it.pill)}</span>
+    <div class="dc-title">${esc(it.title)}</div><div class="dc-sub">${esc(it.sub)}</div>
+    <div class="dc-value ${it.value < 0 ? 'neg' : ''}">${esc(money(it.value))}</div>
+    <div class="dc-chips">${it.chips.map((c) => `<span>${esc(c)}</span>`).join('')}</div>
+  </article>`;
+}
+
+// Classic layout: the same cards, laid out flat. The total on top, every account in an even grid below.
+const flatAttrs = (label) => `data-action="open-acct" role="button" tabindex="0" aria-label="${esc(label)}. Show its transactions"`;
+function classicTotalHTML(w, s) {
+  const it = deckItems(w, s)[0];
+  return dcardHTML(it, `data-flat="1" ${flatAttrs(it.title)}`);
+}
+function classicAccountsHTML(w, s) {
+  const items = deckItems(w, s).slice(1);
+  return `<div class="h2row"><h2>Accounts</h2><button class="link" data-action="tab" data-tab="wallets">Manage</button></div>
+    <div class="dgrid">${items.map((it) => dcardHTML(it, `data-flat="1" data-small="1" ${flatAttrs(it.title)}`)).join('')}</div>`;
+}
+
 function deckHTML(w, s) {
   const items = deckItems(w, s);
   const n = items.length;
   if (ui.deck >= n || ui.deck < 0) ui.deck = 0;
   const cards = items.map((it, i) => {
     const rel = (i - ui.deck + n) % n;
-    return `<article class="dcard" data-i="${i}" data-rel="${Math.min(rel, 3)}" ${rel ? 'aria-hidden="true"' : ''} data-key="${esc(it.key)}" style="--x1:${it.x1}%;--x2:${it.x2}%">
-      <span class="dc-badge">${it.icon}</span><span class="dc-pill">${esc(it.pill)}</span>
-      <div class="dc-title">${esc(it.title)}</div><div class="dc-sub">${esc(it.sub)}</div>
-      <div class="dc-value ${it.value < 0 ? 'neg' : ''}">${esc(money(it.value))}</div>
-      <div class="dc-chips">${it.chips.map((c) => `<span>${esc(c)}</span>`).join('')}</div>
-    </article>`;
+    return dcardHTML(it, `data-i="${i}" data-rel="${Math.min(rel, 3)}" ${rel ? 'aria-hidden="true"' : ''}`);
   }).join('');
   return `<section class="deck" role="group" aria-roledescription="carousel" aria-label="Balances. Swipe left for the next card, press Enter to see its transactions" tabindex="0" data-n="${n}">
     <div class="deck-stage">${cards}</div>
@@ -534,13 +550,12 @@ function viewHome() {
   const classic = balanceStyle() === 'classic';
   return `${topbarHTML(s)}<div class="syncline hint" aria-live="polite">${esc(syncText())}</div>
     <div class="dash">
-      <div class="d-hero">${classic ? heroHTML(w) : deckHTML(w, s)}</div>
+      <div class="d-hero">${classic ? classicTotalHTML(w, s) : deckHTML(w, s)}</div>
       <section class="card chart-card d-stats"><h2>Statistics <span class="muted" style="font-weight:400">· This week</span></h2><div class="ch" id="ch-week"></div></section>
       <section class="card d-ring"><h2>Spending by category <span class="muted" style="font-weight:400">· ${esc(monthLabel(ui.month))}</span></h2><div id="donut" class="donut-wrap"></div></section>
       <section class="card chart-card d-month"><h2>Monthly overview</h2><div class="ch" id="ch-six"></div></section>
       <div class="d-rest">
-        ${classic ? `<div class="h2row"><h2>Accounts</h2><button class="link" data-action="tab" data-tab="wallets">Manage</button></div>
-        <div class="accts">${w.accounts.map(acctCard).join('')}</div>` : ''}
+        ${classic ? classicAccountsHTML(w, s) : ''}
         <h2 style="margin-top:20px">This month</h2>${monthSwitcher()}
         <div class="cards">
           <div class="card stat"><div class="label">Income</div><div class="value income">${esc(money(s.income))}</div></div>
@@ -1562,6 +1577,17 @@ document.addEventListener('click', async (e) => {
   if (!el) return;
   const { action, id, tab } = el.dataset;
   switch (action) {
+    case 'open-acct': {
+      const key = el.dataset.key;
+      ui.acct = key === 'total' ? '' : key;
+      ui.q = '';
+      ui.ttype = '';
+      ui.txLimit = 50;
+      ui.tab = 'transactions';
+      render();
+      window.scrollTo(0, 0);
+      break;
+    }
     case 'tab':
       ui.tab = tab;
       render();
@@ -1829,6 +1855,11 @@ window.addEventListener('beforeinstallprompt', (e) => {
 });
 
 document.addEventListener('keydown', (e) => {
+  if ((e.key === 'Enter' || e.key === ' ') && e.target?.matches?.('.dcard[data-flat]')) {
+    e.preventDefault();
+    e.target.click();
+    return;
+  }
   if (e.key === 'Enter' && e.target?.id === 'topsearch') {
     ui.q = e.target.value.trim();
     ui.tab = 'transactions';
