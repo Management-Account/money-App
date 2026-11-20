@@ -6,7 +6,7 @@ import { institutionOf, badgeHTML } from './institutions.js';
 import {
   SCHEMA_VERSION, uid, todayStr, monthKey, shiftMonth, toMinor, fromMinor, formatMoney, createState, live, upsert, remove,
   mergeState, sanitizeState, summarize, toCSV, importCSV, isValidDate, monthsEnding, addDays, daysBetween, unitFor, rangeSeries, balanceBeforeDate, categoryTotalsRange, validLogo,
-  toMinorSigned, liveAccounts, fallbackAccountId, accountIdOf, accountSummaries, removeAccount,
+  toMinorSigned, liveAccounts, fallbackAccountId, accountIdOf, accountSummaries, removeAccount, FEE_CAT, FEE_NAME,
 } from './store.js';
 import { getCurrencies } from './currencies.js';
 import { columnChart, lineChart, rankedBars, ringGauge, attachTips, hideTip } from './charts.js';
@@ -135,7 +135,7 @@ function refreshView() {
 const money = (n) => formatMoney(n, state.settings.currency);
 const catName = (id) => state.categories.find((c) => c.id === id)?.name || 'Uncategorized';
 const catById = (id) => state.categories.find((c) => c.id === id);
-const catLabel = (id) => (id && catById(id) ? `${categoryEmoji(catById(id))} ${catById(id).name}` : '🏷️ Uncategorized');
+const catLabel = (id) => (id === FEE_CAT ? `🔁 ${FEE_NAME}` : id && catById(id) ? `${categoryEmoji(catById(id))} ${catById(id).name}` : '🏷️ Uncategorized');
 const acctName = (id) => (state.accounts || []).find((a) => a.id === id)?.name || '';
 
 function monthLabel(key) {
@@ -245,17 +245,24 @@ function filteredTx() {
   return sortedTx().filter((t) => {
     if (ui.ttype && t.type !== ui.ttype) return false;
     const aid = accountIdOf(state, t);
-    if (ui.acct && aid !== ui.acct) return false;
+    const ids = t.type === 'transfer' ? [aid, trTo(t), trFeeAcc(t)] : [aid];
+    if (ui.acct && !ids.includes(ui.acct)) return false;
     if (!q) return true;
-    return t.note.toLowerCase().includes(q) || catName(t.categoryId).toLowerCase().includes(q) || acctName(aid).toLowerCase().includes(q);
+    return t.note.toLowerCase().includes(q) || (t.type === 'transfer' ? 'transfer' : catName(t.categoryId).toLowerCase()).includes(q) || ids.some((i) => acctName(i).toLowerCase().includes(q));
   });
 }
 
+const trTo = (t) => { const a = liveAccounts(state).find((x) => x.id === t.toAccountId); return a ? a.id : fallbackAccountId(state); };
+const trFeeAcc = (t) => { const a = t.feeAccountId && liveAccounts(state).find((x) => x.id === t.feeAccountId); return a ? a.id : accountIdOf(state, t); };
+
 function txRow(t, multi, withDate = false) {
-  const sign = t.type === 'income' ? '+' : '−';
-  const sub = [withDate ? dayLabel(t.date) : '', t.note, multi ? acctName(accountIdOf(state, t)) : ''].filter(Boolean).join(' · ');
+  const tr = t.type === 'transfer';
+  const sign = t.type === 'income' ? '+' : tr ? '' : '−';
+  const feeText = tr && t.fee > 0 ? `Fee ${money(t.fee)} from ${acctName(trFeeAcc(t))}` : '';
+  const sub = [withDate ? dayLabel(t.date) : '', t.note, tr ? feeText : multi ? acctName(accountIdOf(state, t)) : ''].filter(Boolean).join(' · ');
+  const title = tr ? `🔁 ${acctName(accountIdOf(state, t))} → ${acctName(trTo(t))}` : catLabel(t.categoryId);
   return `<button class="row" data-action="edit-tx" data-id="${esc(t.id)}">
-    <span><span class="t">${esc(catLabel(t.categoryId))}</span>
+    <span><span class="t">${esc(title)}</span>
       ${sub ? `<br><span class="sub">${esc(sub)}</span>` : ''}</span>
     <span class="amt ${t.type}">${sign}${esc(money(t.amount))}</span>
   </button>`;
@@ -522,7 +529,7 @@ function viewWallets() {
   return `<h1>Accounts</h1>${heroHTML(w)}
     <div class="btns" style="margin:14px 0"><button class="btn primary" data-action="add-wallet">New account</button></div>
     <div class="accts wide">${w.accounts.map(walletCard).join('')}</div>
-    <p class="hint">An account's balance is its starting balance, plus everything recorded in it as income, minus everything recorded as an expense. Choose the account whenever you add a transaction.</p>`;
+    <p class="hint">An account's balance is its starting balance, plus everything recorded in it as income, minus everything recorded as an expense. Choose the account whenever you add a transaction. A transfer moves money between two accounts (its fee, if any, comes out of the account you choose).</p>`;
 }
 
 function viewTransactions() {
@@ -536,7 +543,7 @@ function viewTransactions() {
       ${accs.length > 1 ? `<select id="f-acct" aria-label="Account"><option value="">All accounts</option>${accs
         .map((a) => `<option value="${esc(a.id)}" ${ui.acct === a.id ? 'selected' : ''}>${esc(a.name)}</option>`)
         .join('')}</select>` : ''}
-      <div class="filters" role="group" aria-label="Type">${typeBtn('', 'All')}${typeBtn('expense', 'Expenses')}${typeBtn('income', 'Income')}</div>
+      <div class="filters" role="group" aria-label="Type">${typeBtn('', 'All')}${typeBtn('expense', 'Expenses')}${typeBtn('income', 'Income')}${typeBtn('transfer', 'Transfers')}</div>
     </div>
     <div id="txlist">${txListBlock()}</div>`;
 }
@@ -919,6 +926,8 @@ function walletOptions(selected) {
     .join('');
 }
 
+const liveAccountsCount = () => liveAccounts(state).length;
+
 function openTxDialog(id) {
   const existing = id ? live(state.transactions).find((t) => t.id === id) : null;
   const lastOk = liveAccounts(state).some((a) => a.id === ui.lastAccount);
@@ -932,14 +941,22 @@ function openTxDialog(id) {
         <div class="seg">
           <label><input type="radio" name="type" value="expense" ${tx.type === 'expense' ? 'checked' : ''}>Expense</label>
           <label><input type="radio" name="type" value="income" ${tx.type === 'income' ? 'checked' : ''}>Income</label>
+          <label><input type="radio" name="type" value="transfer" ${tx.type === 'transfer' ? 'checked' : ''}>Transfer</label>
         </div>
       </div>
       <div class="field"><label for="f-amt">Amount</label>
         <input type="text" id="f-amt" name="amount" inputmode="decimal" autocomplete="off" placeholder="0.00" value="${existing ? esc(fromMinor(tx.amount)) : ''}"></div>
-      <div class="field"><label for="f-acc">Account</label>
+      <div class="field"><label for="f-acc" id="f-acc-l">${tx.type === 'transfer' ? 'From account' : 'Account'}</label>
         <select id="f-acc" name="accountId">${walletOptions(tx.accountId)}</select></div>
-      <div class="field"><label for="f-cat">Category</label>
-        <select id="f-cat" name="categoryId">${categoryOptions(tx.type, tx.categoryId)}</select></div>
+      <div class="field tr-only" ${tx.type === 'transfer' ? '' : 'hidden'}><label for="f-to">To account</label>
+        <select id="f-to" name="toAccountId">${walletOptions(tx.toAccountId || (liveAccounts(state).find((a) => a.id !== tx.accountId) || {}).id)}</select></div>
+      <div class="field tr-only" ${tx.type === 'transfer' ? '' : 'hidden'}><label for="f-fee">Transfer fee (optional)</label>
+        <input type="text" id="f-fee" name="fee" inputmode="decimal" autocomplete="off" placeholder="0.00" value="${tx.fee ? esc(fromMinor(tx.fee)) : ''}"></div>
+      <div class="field tr-only" ${tx.type === 'transfer' ? '' : 'hidden'}><label for="f-feeacc">Fee is taken from</label>
+        <select id="f-feeacc" name="feeAccountId">${walletOptions(tx.feeAccountId || tx.accountId)}</select>
+        <span class="hint">The fee is an expense charged to this account. The transferred amount itself is not counted as income or spending.</span></div>
+      <div class="field cat-only" ${tx.type === 'transfer' ? 'hidden' : ''}><label for="f-cat">Category</label>
+        <select id="f-cat" name="categoryId">${categoryOptions(tx.type === 'transfer' ? 'expense' : tx.type, tx.categoryId)}</select></div>
       <div class="field"><label for="f-date">Date</label>
         <input type="date" id="f-date" name="date" value="${esc(tx.date)}"></div>
       <div class="field"><label for="f-note">Note (optional)</label>
@@ -955,7 +972,20 @@ function openTxDialog(id) {
     {
       onOpen(form) {
         form.addEventListener('change', (e) => {
-          if (e.target.name === 'type') form.querySelector('#f-cat').innerHTML = categoryOptions(e.target.value, '');
+          if (e.target.name === 'type') {
+            const tr = e.target.value === 'transfer';
+            if (!tr) form.querySelector('#f-cat').innerHTML = categoryOptions(e.target.value, '');
+            form.querySelectorAll('.tr-only').forEach((el) => (el.hidden = !tr));
+            form.querySelectorAll('.cat-only').forEach((el) => (el.hidden = tr));
+            form.querySelector('#f-acc-l').textContent = tr ? 'From account' : 'Account';
+          }
+          if (e.target.id === 'f-acc' && form.querySelector('input[name=type]:checked').value === 'transfer') {
+            const feeSel = form.querySelector('#f-feeacc');
+            if (!feeSel.dataset.touched) feeSel.value = e.target.value;
+            const to = form.querySelector('#f-to');
+            if (to.value === e.target.value) to.value = (liveAccounts(state).find((a) => a.id !== e.target.value) || {}).id || to.value;
+          }
+          if (e.target.id === 'f-feeacc') e.target.dataset.touched = '1';
         });
         if (!existing) form.querySelector('#f-amt').focus();
       },
@@ -966,7 +996,20 @@ function openTxDialog(id) {
         if (!isValidDate(date)) return 'Pick a valid date.';
         const accountId = fd.get('accountId');
         if (!liveAccounts(state).some((a) => a.id === accountId)) return 'Pick an account.';
-        const rec = { id: tx.id, type: fd.get('type'), amount, categoryId: fd.get('categoryId') || '', accountId, date, note: (fd.get('note') || '').trim() };
+        const type = fd.get('type');
+        let rec = { id: tx.id, type, amount, categoryId: type === 'transfer' ? '' : fd.get('categoryId') || '', accountId, date, note: (fd.get('note') || '').trim() };
+        if (type === 'transfer') {
+          const toAccountId = fd.get('toAccountId');
+          if (liveAccountsCount() < 2) return 'You need at least two accounts to make a transfer. Add another account first.';
+          if (!liveAccounts(state).some((a) => a.id === toAccountId)) return 'Pick the account to send to.';
+          if (toAccountId === accountId) return 'Choose two different accounts.';
+          const feeRaw = (fd.get('fee') || '').trim();
+          const fee = feeRaw ? toMinor(feeRaw) : 0;
+          if (!Number.isFinite(fee) || fee < 0) return 'Enter the fee like 5 or 2.50, or leave it empty.';
+          const feeAccountId = fd.get('feeAccountId');
+          if (fee > 0 && !liveAccounts(state).some((a) => a.id === feeAccountId)) return 'Pick the account the fee is taken from.';
+          rec = { ...rec, toAccountId, fee, feeAccountId: fee > 0 ? feeAccountId : '' };
+        }
         ui.lastAccount = accountId;
         ui.month = monthKey(date);
         setState({ ...state, transactions: upsert(state.transactions, rec) });

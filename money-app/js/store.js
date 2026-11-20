@@ -200,7 +200,7 @@ export function sanitizeState(obj) {
         t &&
         typeof t.id === 'string' &&
         UUID_RE.test(t.id) &&
-        (t.type === 'expense' || t.type === 'income') &&
+        (t.type === 'expense' || t.type === 'income' || t.type === 'transfer') &&
         Number.isSafeInteger(t.amount) &&
         t.amount > 0 &&
         isValidDate(t.date),
@@ -213,6 +213,13 @@ export function sanitizeState(obj) {
       accountId: typeof t.accountId === 'string' && UUID_RE.test(t.accountId) ? t.accountId : '',
       date: t.date,
       note: typeof t.note === 'string' ? t.note.slice(0, 200) : '',
+      ...(t.type === 'transfer'
+        ? {
+            toAccountId: typeof t.toAccountId === 'string' && UUID_RE.test(t.toAccountId) ? t.toAccountId : '',
+            fee: Number.isSafeInteger(t.fee) && t.fee > 0 ? t.fee : 0,
+            feeAccountId: typeof t.feeAccountId === 'string' && UUID_RE.test(t.feeAccountId) ? t.feeAccountId : '',
+          }
+        : {}),
       updatedAt: Number.isFinite(t.updatedAt) ? t.updatedAt : 0,
       ...(t.deleted ? { deleted: true } : {}),
     }));
@@ -237,6 +244,35 @@ export function sanitizeState(obj) {
   return { version: SCHEMA_VERSION, settings: { currency, theme, graph, name, avatar, updatedAt }, categories, accounts, transactions };
 }
 
+// ---------- transfers ----------
+// A transfer moves money between two accounts. It is not income or spending; only its fee is an expense.
+export const FEE_CAT = '__fee';
+export const FEE_NAME = 'Transfer fees';
+
+// Money-in / money-out of one transaction as seen by the whole budget.
+export function flow(t) {
+  if (t.type === 'income') return { income: t.amount, expense: 0, feeOnly: false };
+  if (t.type === 'transfer') return { income: 0, expense: t.fee || 0, feeOnly: true };
+  return { income: 0, expense: t.amount, feeOnly: false };
+}
+export const netOf = (t) => { const f = flow(t); return f.income - f.expense; };
+
+function liveAccountId(state, id) {
+  const a = id && (state.accounts || []).find((x) => x.id === id && !x.deleted);
+  return a ? a.id : fallbackAccountId(state);
+}
+
+// Per-account balance changes: [[accountId, delta], ...]
+export function accountDeltas(state, t) {
+  const from = accountIdOf(state, t);
+  if (t.type === 'income') return [[from, t.amount]];
+  if (t.type === 'expense') return [[from, -t.amount]];
+  const to = liveAccountId(state, t.toAccountId);
+  const out = [[from, -t.amount], [to, t.amount]];
+  if (t.fee > 0) out.push([t.feeAccountId ? liveAccountId(state, t.feeAccountId) : from, -t.fee]);
+  return out;
+}
+
 // ---------- summaries ----------
 
 export function summarize(state, month) {
@@ -246,16 +282,18 @@ export function summarize(state, month) {
   let expense = 0;
   const spent = new Map();
   for (const t of txs) {
-    if (t.type === 'income') income += t.amount;
-    else {
-      expense += t.amount;
-      spent.set(t.categoryId, (spent.get(t.categoryId) || 0) + t.amount);
+    const f = flow(t);
+    income += f.income;
+    if (f.expense > 0) {
+      expense += f.expense;
+      const key = f.feeOnly ? FEE_CAT : t.categoryId;
+      spent.set(key, (spent.get(key) || 0) + f.expense);
     }
   }
   const rows = new Map();
   for (const [id, amount] of spent) {
     const c = cats.get(id);
-    rows.set(id, { id, name: c ? c.name : 'Uncategorized', spent: amount, budget: c && !c.deleted ? c.budget || 0 : 0 });
+    rows.set(id, { id, name: id === FEE_CAT ? FEE_NAME : c ? c.name : 'Uncategorized', spent: amount, budget: c && !c.deleted ? c.budget || 0 : 0 });
   }
   for (const c of live(state.categories)) {
     if (c.type === 'expense' && c.budget > 0 && !rows.has(c.id)) {
@@ -295,10 +333,13 @@ export function accountSummaries(state) {
   const rows = new Map(accs.map((a) => [a.id, { id: a.id, name: a.name, institution: a.institution || '', logo: a.logo || '', opening: a.opening || 0, income: 0, expense: 0, count: 0, balance: 0 }]));
   for (const t of live(state.transactions)) {
     const r = rows.get(accountIdOf(state, t));
-    if (!r) continue;
-    r.count++;
-    if (t.type === 'income') r.income += t.amount;
-    else r.expense += t.amount;
+    if (r) r.count++;
+    for (const [id, d] of accountDeltas(state, t)) {
+      const x = rows.get(id);
+      if (!x) continue;
+      if (d >= 0) x.income += d;
+      else x.expense -= d;
+    }
   }
   const accounts = [...rows.values()];
   for (const r of accounts) r.balance = r.opening + r.income - r.expense;
@@ -308,7 +349,7 @@ export function accountSummaries(state) {
 // Deleting a wallet also deletes the transactions counted in it, so totals stay truthful.
 export function removeAccount(state, id) {
   const t = now();
-  const doomed = new Set(live(state.transactions).filter((x) => accountIdOf(state, x) === id).map((x) => x.id));
+  const doomed = new Set(live(state.transactions).filter((x) => accountIdOf(state, x) === id || (x.type === 'transfer' && (x.toAccountId === id || x.feeAccountId === id))).map((x) => x.id));
   return {
     ...state,
     accounts: remove(state.accounts, id),
@@ -355,8 +396,9 @@ export function rangeSeries(state, from, to, unit = unitFor(from, to)) {
     if (!inRange(t, from, to)) continue;
     const i = idx.get(unit === 'day' ? t.date : monthKey(t.date));
     if (i === undefined) continue;
-    if (t.type === 'income') rows[i].income += t.amount;
-    else rows[i].expense += t.amount;
+    const f = flow(t);
+    rows[i].income += f.income;
+    rows[i].expense += f.expense;
   }
   for (const r of rows) r.net = r.income - r.expense;
   return rows;
@@ -364,7 +406,7 @@ export function rangeSeries(state, from, to, unit = unitFor(from, to)) {
 
 export function balanceBeforeDate(state, from) {
   let sum = 0;
-  for (const t of live(state.transactions)) if (t.date < from) sum += t.type === 'income' ? t.amount : -t.amount;
+  for (const t of live(state.transactions)) if (t.date < from) sum += netOf(t);
   return sum;
 }
 
@@ -372,10 +414,14 @@ export function categoryTotalsRange(state, from, to, type = 'expense') {
   const names = new Map(state.categories.map((c) => [c.id, c.name]));
   const totals = new Map();
   for (const t of live(state.transactions)) {
-    if (t.type !== type || !inRange(t, from, to)) continue;
-    totals.set(t.categoryId, (totals.get(t.categoryId) || 0) + t.amount);
+    if (!inRange(t, from, to)) continue;
+    const f = flow(t);
+    const amt = type === 'income' ? f.income : f.expense;
+    if (!(t.type === type || (t.type === 'transfer' && type === 'expense' && amt > 0)) || amt <= 0) continue;
+    const key = t.type === 'transfer' ? FEE_CAT : t.categoryId;
+    totals.set(key, (totals.get(key) || 0) + amt);
   }
-  return [...totals].map(([id, total]) => ({ id, name: names.get(id) || 'Uncategorized', total })).sort((a, b) => b.total - a.total);
+  return [...totals].map(([id, total]) => ({ id, name: id === FEE_CAT ? FEE_NAME : names.get(id) || 'Uncategorized', total })).sort((a, b) => b.total - a.total);
 }
 
 export function monthsEnding(endKey, count) {
@@ -390,8 +436,9 @@ export function monthlySeries(state, months) {
   for (const t of live(state.transactions)) {
     const i = idx.get(monthKey(t.date));
     if (i === undefined) continue;
-    if (t.type === 'income') rows[i].income += t.amount;
-    else rows[i].expense += t.amount;
+    const f = flow(t);
+    rows[i].income += f.income;
+    rows[i].expense += f.expense;
   }
   for (const r of rows) r.net = r.income - r.expense;
   return rows;
@@ -401,7 +448,7 @@ export function monthlySeries(state, months) {
 export function balanceBefore(state, firstMonth) {
   let sum = 0;
   for (const t of live(state.transactions)) {
-    if (monthKey(t.date) < firstMonth) sum += t.type === 'income' ? t.amount : -t.amount;
+    if (monthKey(t.date) < firstMonth) sum += netOf(t);
   }
   return sum;
 }
@@ -411,11 +458,15 @@ export function categoryTotals(state, months, type = 'expense') {
   const names = new Map(state.categories.map((c) => [c.id, c.name]));
   const totals = new Map();
   for (const t of live(state.transactions)) {
-    if (t.type !== type || !inRange.has(monthKey(t.date))) continue;
-    totals.set(t.categoryId, (totals.get(t.categoryId) || 0) + t.amount);
+    if (!inRange.has(monthKey(t.date))) continue;
+    const f = flow(t);
+    const amt = type === 'income' ? f.income : f.expense;
+    if (!(t.type === type || (t.type === 'transfer' && type === 'expense')) || amt <= 0) continue;
+    const key = t.type === 'transfer' ? FEE_CAT : t.categoryId;
+    totals.set(key, (totals.get(key) || 0) + amt);
   }
   return [...totals]
-    .map(([id, total]) => ({ id, name: names.get(id) || 'Uncategorized', total }))
+    .map(([id, total]) => ({ id, name: id === FEE_CAT ? FEE_NAME : names.get(id) || 'Uncategorized', total }))
     .sort((a, b) => b.total - a.total);
 }
 
@@ -433,11 +484,11 @@ export function toCSV(state) {
     .slice()
     .sort((a, b) => a.date.localeCompare(b.date))
     .map((t) =>
-      [t.date, t.type, cats.get(t.categoryId) || '', fromMinor(t.amount), t.note, accs.get(accountIdOf(state, t)) || '']
+      [t.date, t.type, cats.get(t.categoryId) || '', fromMinor(t.amount), t.note, accs.get(accountIdOf(state, t)) || '', t.type === 'transfer' ? accs.get(liveAccountId(state, t.toAccountId)) || '' : '', t.type === 'transfer' && t.fee ? fromMinor(t.fee) : '', t.type === 'transfer' && t.fee ? accs.get(t.feeAccountId ? liveAccountId(state, t.feeAccountId) : accountIdOf(state, t)) || '' : '']
         .map(csvEscape)
         .join(','),
     );
-  return ['date,type,category,amount,note,account', ...rows].join('\n') + '\n';
+  return ['date,type,category,amount,note,account,to_account,fee,fee_account', ...rows].join('\n') + '\n';
 }
 
 export function parseCSV(text) {
@@ -486,6 +537,9 @@ export function importCSV(state, text) {
   const iCat = col('category');
   const iNote = col('note');
   const iAcc = col('account');
+  const iTo = col('to_account');
+  const iFee = col('fee');
+  const iFeeAcc = col('fee_account');
 
   let categories = state.categories.slice();
   let accounts = (state.accounts || []).slice();
@@ -496,7 +550,8 @@ export function importCSV(state, text) {
   const seen = new Set(
     live(state.transactions).map((t) => {
       const c = categories.find((x) => x.id === t.categoryId);
-      return [t.date, t.type, (c?.name || '').toLowerCase(), t.amount, t.note, accNameOf(accountIdOf(state, t))].join('|');
+      const extra = t.type === 'transfer' ? [accNameOf(liveAccountId(state, t.toAccountId)), t.fee || 0, accNameOf(t.feeAccountId ? liveAccountId(state, t.feeAccountId) : accountIdOf(state, t))] : [];
+      return [t.date, t.type, (c?.name || '').toLowerCase(), t.amount, t.note, accNameOf(accountIdOf(state, t)), ...extra].join('|');
     }),
   );
   const added = [];
@@ -508,28 +563,40 @@ export function importCSV(state, text) {
     const catName = iCat >= 0 ? (r[iCat] || '').trim() : '';
     const note = iNote >= 0 ? (r[iNote] || '').trim() : '';
     const accName = iAcc >= 0 ? (r[iAcc] || '').trim() : '';
-    if (!isValidDate(date) || (type !== 'income' && type !== 'expense') || !Number.isFinite(amount) || amount <= 0) {
+    if (!isValidDate(date) || (type !== 'income' && type !== 'expense' && type !== 'transfer') || !Number.isFinite(amount) || amount <= 0) {
       skipped++;
       continue;
     }
-    let accountId = defaultAcc;
-    if (accName) {
-      let a = accByName.get(accName.toLowerCase());
+    const accIdByName = (name, fallback) => {
+      if (!name) return fallback;
+      let a = accByName.get(name.toLowerCase());
       if (!a) {
-        a = { id: uid(), name: accName.slice(0, 60), opening: 0, updatedAt: now() };
+        a = { id: uid(), name: name.slice(0, 60), opening: 0, updatedAt: now() };
         accounts = [...accounts, a];
-        accByName.set(accName.toLowerCase(), a);
+        accByName.set(name.toLowerCase(), a);
       }
-      accountId = a.id;
+      return a.id;
+    };
+    const accountId = accIdByName(accName, defaultAcc);
+    let toAccountId = '';
+    let fee = 0;
+    let feeAccountId = '';
+    if (type === 'transfer') {
+      const toName = iTo >= 0 ? (r[iTo] || '').trim() : '';
+      if (!toName) { skipped++; continue; }
+      toAccountId = accIdByName(toName, '');
+      const f = iFee >= 0 && (r[iFee] || '').trim() ? toMinor(r[iFee]) : 0;
+      fee = Number.isFinite(f) && f > 0 ? f : 0;
+      feeAccountId = fee > 0 ? accIdByName(iFeeAcc >= 0 ? (r[iFeeAcc] || '').trim() : '', accountId) : '';
     }
-    const key = [date, type, catName.toLowerCase(), amount, note, accNameOf(accountId)].join('|');
+    const key = [date, type, catName.toLowerCase(), amount, note, accNameOf(accountId), ...(type === 'transfer' ? [accNameOf(toAccountId), fee, accNameOf(feeAccountId || accountId)] : [])].join('|');
     if (seen.has(key)) {
       skipped++;
       continue;
     }
     seen.add(key);
     let categoryId = '';
-    if (catName) {
+    if (catName && type !== 'transfer') {
       const ck = `${type}:${catName.toLowerCase()}`;
       let c = catByKey.get(ck);
       if (!c) {
@@ -539,7 +606,7 @@ export function importCSV(state, text) {
       }
       categoryId = c.id;
     }
-    added.push({ id: uid(), type, amount, categoryId, accountId, date, note: note.slice(0, 200), updatedAt: now() });
+    added.push({ id: uid(), type, amount, categoryId, accountId, date, note: note.slice(0, 200), ...(type === 'transfer' ? { toAccountId, fee, feeAccountId } : {}), updatedAt: now() });
   }
   return { state: { ...state, categories, accounts, transactions: [...state.transactions, ...added] }, added: added.length, skipped };
 }

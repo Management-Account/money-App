@@ -78,7 +78,7 @@ test('soft delete hides a transaction from summaries', () => {
 test('CSV export then import into a fresh state restores data and skips duplicates', () => {
   const s = sampleState();
   const csv = toCSV(s);
-  assert.deepEqual(parseCSV(csv)[0], ['date', 'type', 'category', 'amount', 'note', 'account']);
+  assert.deepEqual(parseCSV(csv)[0], ['date', 'type', 'category', 'amount', 'note', 'account', 'to_account', 'fee', 'fee_account']);
   const fresh = createState();
   const r = importCSV(fresh, csv);
   assert.equal(r.added, 4);
@@ -313,8 +313,8 @@ test('sanitizeState keeps wallets and each transaction wallet, and drops bad one
 test('CSV: wallets round-trip through export and import, new wallets are created, duplicates skipped', () => {
   const s = walletState();
   const csv = toCSV(s);
-  assert.ok(csv.split('\n')[0].endsWith(',account'));
-  assert.match(csv, /,Bank\n/);
+  assert.ok(csv.split('\n')[0].includes(',account,'));
+  assert.match(csv, /,Bank,,,\n/);
   const r = importCSV(createState(), csv);
   assert.equal(r.added, 4);
   assert.deepEqual(liveAccounts(r.state).map((a) => a.name), ['Bank', 'Cash']);
@@ -423,4 +423,56 @@ test('category colours: valid hex only, built-in defaults, stable fallback, next
   const clean = sanitizeState({ ...s, categories: [...s.categories, { id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', name: 'C', type: 'expense', color: '#123456', updatedAt: 1 }, { id: 'ffffffff-ffff-4fff-8fff-ffffffffffff', name: 'D', type: 'expense', color: 'javascript:1', updatedAt: 1 }] });
   assert.equal(clean.categories.find((c) => c.name === 'C').color, '#123456');
   assert.equal(clean.categories.find((c) => c.name === 'D').color, '');
+});
+
+// ---------- transfers ----------
+import { accountSummaries as _accSum, flow as _flow } from '../js/store.js';
+test('transfers move money between accounts and only the fee is an expense', () => {
+  const s = createState();
+  const a = { id: '11111111-1111-4111-8111-111111111111', name: 'A', opening: 100000, updatedAt: 1 };
+  const b = { id: '22222222-2222-4222-8222-222222222222', name: 'B', opening: 0, updatedAt: 1 };
+  s.accounts = [a, b];
+  const day = '2026-11-10';
+  const tr = (extra) => ({ id: crypto.randomUUID(), type: 'transfer', amount: 30000, categoryId: '', accountId: a.id, toAccountId: b.id, fee: 500, feeAccountId: a.id, date: day, note: '', updatedAt: 2, ...extra });
+  s.transactions = [tr({})];
+  let w = _accSum(s);
+  const bal = (id) => w.accounts.find((x) => x.id === id).balance;
+  assert.equal(bal(a.id), 100000 - 30000 - 500);
+  assert.equal(bal(b.id), 30000);
+  assert.equal(w.total, 100000 - 500);
+  const m = summarize(s, '2026-11');
+  assert.equal(m.income, 0);
+  assert.equal(m.expense, 500);
+  assert.equal(m.byCategory[0].name, 'Transfer fees');
+  // fee charged to the receiving account
+  s.transactions = [tr({ feeAccountId: b.id })];
+  w = _accSum(s);
+  assert.equal(bal(a.id), 70000);
+  assert.equal(bal(b.id), 30000 - 500);
+  // no fee
+  s.transactions = [tr({ fee: 0, feeAccountId: '' })];
+  assert.equal(summarize(s, '2026-11').expense, 0);
+  assert.equal(_flow(s.transactions[0]).feeOnly, true);
+});
+
+test('transfers survive sanitize, CSV round trip and account removal', () => {
+  const s = createState();
+  const a = { id: '11111111-1111-4111-8111-111111111111', name: 'A', opening: 0, updatedAt: 1 };
+  const b = { id: '22222222-2222-4222-8222-222222222222', name: 'B', opening: 0, updatedAt: 1 };
+  s.accounts = [a, b];
+  s.transactions = [{ id: crypto.randomUUID(), type: 'transfer', amount: 5000, categoryId: '', accountId: a.id, toAccountId: b.id, fee: 250, feeAccountId: b.id, date: '2026-11-10', note: 'x', updatedAt: 2 }];
+  const clean = sanitizeState(JSON.parse(JSON.stringify(s)));
+  assert.equal(clean.transactions[0].type, 'transfer');
+  assert.equal(clean.transactions[0].fee, 250);
+  assert.equal(clean.transactions[0].feeAccountId, b.id);
+  const csv = toCSV(s);
+  const fresh = createState();
+  fresh.accounts = [a, b];
+  const r = importCSV(fresh, csv);
+  assert.equal(r.added, 1);
+  const t = r.state.transactions.find((x) => x.type === 'transfer');
+  assert.equal(t.toAccountId, b.id); assert.equal(t.fee, 250); assert.equal(t.feeAccountId, b.id);
+  assert.equal(importCSV(r.state, csv).added, 0);
+  const gone = removeAccount(s, b.id);
+  assert.ok(gone.transactions.every((x) => x.deleted));
 });
