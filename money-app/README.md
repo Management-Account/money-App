@@ -113,3 +113,11 @@ Money is stored as integer minor units (cents/piasters). This makes cloud sync s
 ## Themes
 Every colour in `styles.css` comes from variables on `:root`. A theme is one block, `:root[data-theme="name"] { ... }`, that overrides them, plus an entry in `js/themes.js`
 (and the allowed names in the small script at the top of `index.html` and in `themeMeta`). Check chart colours on a new surface with the contrast rules: series colours need 3:1 against the card colour.
+
+## Dashboard, profile and Liquid Glass (v17)
+- **Home is now a dashboard**: greeting, search (Enter opens Activity), notification bell (budget alerts), Total balance, weekly Statistics wave chart, savings-rate ring, monthly overview, and a profile card on wide screens.
+- **Profile**: tap your avatar (or the profile card at the bottom of the sidebar). Set a display name and upload a photo with the crop/zoom editor. It syncs across devices.
+- **Sign Out** now sits under the navigation in the sidebar (and in the Profile page on phones), not in Settings.
+- **Liquid Glass** theme added in the Themes tab.
+- Run `supabase/schema.sql` once more so the `display_name` and `avatar` columns exist (safe, keeps your data).
+- Three more themes: **Neumorphic Mint**, **Neumorphic Indigo** and **Neon Knobs** (v18).

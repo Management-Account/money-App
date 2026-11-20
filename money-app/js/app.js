@@ -182,6 +182,10 @@ const ICONS = {
   themes: svg('<path d="M12 3a9 9 0 1 0 0 18c1.1 0 1.7-.8 1.7-1.7 0-.5-.2-.9-.5-1.2-.3-.3-.5-.7-.5-1.2 0-1 .8-1.7 1.7-1.7H17a4 4 0 0 0 4-4c0-4.4-4-7.2-9-7.2z"/><circle cx="7.5" cy="11" r="1"/><circle cx="10" cy="7" r="1"/><circle cx="14.5" cy="7" r="1"/>'),
   wallets: svg('<rect x="2.5" y="5" width="19" height="14" rx="3"/><path d="M2.5 10h19M6.5 15h4"/>'),
   categories: svg('<path d="M12 3v9h9"/><path d="M20.5 15A9 9 0 1 1 9 3.5"/>'),
+  profile: svg('<circle cx="12" cy="8" r="4"/><path d="M4 21c1-4.5 4.5-6.5 8-6.5s7 2 8 6.5"/>'),
+  bell: svg('<path d="M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15z"/><path d="M10 21h4"/>'),
+  search: svg('<circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/>'),
+  signout: svg('<path d="M9 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h4"/><path d="M16 8l4 4-4 4M20 12H9"/>'),
   settings: svg('<path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/>'),
 };
 
@@ -198,14 +202,28 @@ const TABS = [
   ['settings', 'Settings', 'Settings'],
 ];
 
+function profName() {
+  const s = getSession();
+  return (state.settings.name || '').trim() || (s ? displayName(s.user.email) : '') || 'there';
+}
+function avatarHTML(cls = '') {
+  const a = state.settings.avatar;
+  return `<span class="avatar ${cls}" aria-hidden="true">${a ? `<img src="${esc(a)}" alt="">` : esc((profName()[0] || '?').toUpperCase())}</span>`;
+}
+const userHandle = () => { const s = getSession(); return s ? `@${displayName(s.user.email)}` : 'This device'; };
+
 function renderNav() {
+  const signedIn = cloudEnabled && !!getSession();
   $('#nav').innerHTML =
     `<div class="brand"><span class="logo">${LOGO}</span><span>Pocket Ledger</span></div>` +
     TABS.map(
       ([id, label, short]) =>
         `<button data-action="tab" data-tab="${id}" aria-label="${label}" ${ui.tab === id ? 'aria-current="page"' : ''}>` +
         `<span class="ico">${ICONS[id]}</span><span class="lbl">${label}</span><span class="lbl-s">${short}</span></button>`,
-    ).join('');
+    ).join('') +
+    (signedIn ? `<button class="navout" data-action="signout" aria-label="Sign Out"><span class="ico">${ICONS.signout}</span><span class="lbl">Sign Out</span></button>` : '') +
+    `<div class="nav-foot"><button class="mini-profile" data-action="tab" data-tab="profile" aria-label="Your profile" ${ui.tab === 'profile' ? 'aria-current="page"' : ''}>` +
+    `${avatarHTML('sm')}<span class="mp-text"><b>${esc(profName())}</b><small>${esc(userHandle())}</small></span></button></div>`;
 }
 
 function monthSwitcher() {
@@ -300,7 +318,7 @@ function barsHTML(s) {
 
 function heroHTML(w) {
   const n = w.accounts.length;
-  return `<section class="card hero">
+  return `<section class="card hero"><span class="blob" aria-hidden="true"></span>
     <div class="label">Total balance</div>
     <div class="hero-value ${w.total < 0 ? 'expense' : ''}">${esc(money(w.total))}</div>
     <div class="sub">Across ${n} account${n === 1 ? '' : 's'}</div>
@@ -332,23 +350,181 @@ function walletCard(a) {
   </span></button>`;
 }
 
+function budgetAlerts(s) {
+  return s.byCategory
+    .filter((r) => r.budget > 0 && r.spent / r.budget >= 0.85)
+    .map((r) => ({ name: catLabel(r.id), over: r.spent > r.budget, text: `${money(r.spent)} of ${money(r.budget)}` }));
+}
+
+function topbarHTML(s) {
+  const n = budgetAlerts(s).length;
+  return `<header class="topbar">
+    <div class="greet"><h1>Dashboard</h1><p>Welcome back, ${esc(profName())} \u{1F44B}</p></div>
+    <label class="search">${ICONS.search}<input id="topsearch" type="search" placeholder="Search transactions" aria-label="Search transactions" value="${esc(ui.q)}"></label>
+    <button class="icon-pill" data-action="bell" aria-label="Notifications${n ? `, ${n} budget alert${n === 1 ? '' : 's'}` : ''}">${ICONS.bell}${n ? `<span class="badge">${n}</span>` : ''}</button>
+    <button class="avatar-btn" data-action="tab" data-tab="profile" aria-label="Your profile">${avatarHTML()}</button>
+  </header>`;
+}
+
+function profileStats() {
+  return `<div class="pstats">
+    <div><b>${live(state.transactions).length}</b><span>Transactions</span></div>
+    <div><b>${liveAccounts(state).length}</b><span>Accounts</span></div>
+    <div><b>${live(state.categories).length}</b><span>Categories</span></div>
+  </div>`;
+}
+
+function profileCardHTML() {
+  return `<section class="card prof-card" aria-label="Profile">
+    <span class="ring-avatar">${avatarHTML('xl')}</span>
+    <div class="prof-name">${esc(profName())}</div><div class="prof-sub">${esc(userHandle())}</div>
+    ${profileStats()}
+    <button class="btn" data-action="edit-profile">Edit profile</button>
+  </section>`;
+}
+
 function viewHome() {
   const s = summarize(state, ui.month);
   const w = accountSummaries(state);
-  return `<h1>Overview</h1><div class="syncline hint" aria-live="polite">${esc(syncText())}</div>
-    ${heroHTML(w)}
-    <div class="h2row"><h2>Accounts</h2><button class="link" data-action="tab" data-tab="wallets">Manage</button></div>
-    <div class="accts">${w.accounts.map(acctCard).join('')}</div>
-    <h2>This month</h2>${monthSwitcher()}
-    <div class="cards">
-      <div class="card stat"><div class="label">Income</div><div class="value income">${esc(money(s.income))}</div></div>
-      <div class="card stat"><div class="label">Expenses</div><div class="value expense">${esc(money(s.expense))}</div></div>
-      <div class="card stat"><div class="label">Net</div><div class="value ${s.net < 0 ? 'expense' : ''}">${esc(money(s.net))}</div></div>
-    </div>
-    <h2>Spending by category</h2>
-    <div class="card">${barsHTML(s)}</div>
-    <div class="h2row"><h2>Latest transactions</h2><button class="link" data-action="tab" data-tab="transactions">View all</button></div>
-    ${latestHTML()}`;
+  const rate = s.income > 0 ? Math.max(0, Math.min(1, s.net / s.income)) : 0;
+  return `${topbarHTML(s)}<div class="syncline hint" aria-live="polite">${esc(syncText())}</div>
+    <div class="dash">
+      <div class="d-hero">${heroHTML(w)}</div>
+      <section class="card chart-card d-stats"><h2>Statistics <span class="muted" style="font-weight:400">· This week</span></h2><div class="ch" id="ch-week"></div></section>
+      <section class="card d-ring"><h2>Savings rate</h2><div class="ring-row"><span id="ring-save"></span>
+        <p class="hint">${s.income > 0 ? `You kept ${Math.round(rate * 100)}% of this month's income.` : 'Add income this month to see how much you keep.'}</p></div></section>
+      <section class="card chart-card d-month"><h2>Monthly overview</h2><div class="ch" id="ch-six"></div></section>
+      ${profileCardHTML()}
+      <div class="d-rest">
+        <div class="h2row"><h2>Accounts</h2><button class="link" data-action="tab" data-tab="wallets">Manage</button></div>
+        <div class="accts">${w.accounts.map(acctCard).join('')}</div>
+        <h2 style="margin-top:20px">This month</h2>${monthSwitcher()}
+        <div class="cards">
+          <div class="card stat"><div class="label">Income</div><div class="value income">${esc(money(s.income))}</div></div>
+          <div class="card stat"><div class="label">Expenses</div><div class="value expense">${esc(money(s.expense))}</div></div>
+          <div class="card stat"><div class="label">Net</div><div class="value ${s.net < 0 ? 'expense' : ''}">${esc(money(s.net))}</div></div>
+        </div>
+        <h2 style="margin-top:20px">Spending by category</h2>
+        <div class="card">${barsHTML(s)}</div>
+        <div class="h2row" style="margin-top:20px"><h2>Recent activity</h2><button class="link" data-action="tab" data-tab="transactions">View all</button></div>
+        ${latestHTML()}
+      </div>
+    </div>`;
+}
+
+function drawHome() {
+  if (ui.tab !== 'home') return;
+  hideTip();
+  const tipEl = $('#tip');
+  const today = todayStr();
+  const mount = (id, make) => {
+    const el = $(id);
+    if (!el || !el.clientWidth) return;
+    const { html, tips } = make(el.clientWidth);
+    el.innerHTML = html;
+    attachTips(el, tips, tipEl);
+  };
+  const week = rangeSeries(state, addDays(today, -6), today, 'day');
+  mount('#ch-week', (width) =>
+    lineChart({
+      width, height: 200, name: 'Spending', fmtMoney: money, ariaLabel: 'Spending per day this week', variant: graphStyle() === 'classic' ? 'wave' : graphStyle(),
+      months: week.map((r) => ({ label: fmtDay(r.key, { weekday: 'short' }), title: fmtDay(r.key, { weekday: 'long', day: 'numeric', month: 'short' }), value: r.expense })),
+    }),
+  );
+  const six = rangeSeries(state, `${shiftMonth(monthKey(today), -5)}-01`, today, 'month');
+  mount('#ch-six', (width) =>
+    columnChart({
+      width, height: 200, fmtMoney: money, ariaLabel: 'Income and expenses, last 6 months', variant: graphStyle(),
+      series: [{ name: 'Income', cls: 's1' }, { name: 'Expenses', cls: 's2' }],
+      months: six.map((r) => ({ label: new Date(Number(r.key.slice(0, 4)), Number(r.key.slice(5, 7)) - 1, 1).toLocaleDateString(undefined, { month: 'short' }), title: monthLabel(r.key), values: [r.income, r.expense] })),
+    }),
+  );
+  const s = summarize(state, ui.month);
+  const rate = s.income > 0 ? Math.max(0, Math.min(1, s.net / s.income)) : 0;
+  const rg = $('#ring-save');
+  if (rg) rg.innerHTML = ringGauge({ value: rate, text: `${Math.round(rate * 100)}%`, size: 96, variant: graphStyle() });
+}
+
+function viewProfile() {
+  const signedIn = cloudEnabled && !!getSession();
+  return `<h1>Profile</h1><div class="profile-view">
+    <section class="card prof-card" style="display:block">
+      <span class="ring-avatar">${avatarHTML('xl')}</span>
+      <div class="prof-name">${esc(profName())}</div><div class="prof-sub">${esc(userHandle())}</div>
+      ${profileStats()}
+      <div class="btns">
+        <button class="btn primary" data-action="edit-profile">Edit profile</button>
+        ${signedIn ? '<button class="btn" data-action="sync">Sync now</button><button class="btn" data-action="change-password">Change password</button>' : ''}
+        ${signedIn ? '<button class="btn danger" data-action="signout">Sign Out</button>' : ''}
+      </div>
+      <div class="syncline hint" aria-live="polite" style="margin-top:10px">${esc(syncText())}</div>
+    </section></div>`;
+}
+
+function openBellDialog() {
+  const list = budgetAlerts(summarize(state, monthKey(todayStr())));
+  openDialog(`<form><h3>Notifications</h3>
+    ${list.length ? `<ul class="alert-list">${list.map((a) => `<li class="${a.over ? 'over' : 'near'}"><strong>${esc(a.name)}</strong><br>${a.over ? 'Over budget' : 'Close to budget'}: ${esc(a.text)}</li>`).join('')}</ul>` : '<p class="hint">You are within every budget this month. Nothing needs your attention.</p>'}
+    <div class="error" role="alert"></div>
+    <div class="actions"><span class="spacer"></span><button type="button" class="btn primary" data-close>Close</button></div></form>`, { onSubmit() {} });
+}
+
+function openProfileDialog() {
+  openDialog(
+    `<form><h3>Edit profile</h3>
+      <div class="field"><span class="lbl">Photo</span>
+        <div class="avatar-row"><span class="ring-avatar" id="av-prev"></span>
+          <button type="button" class="btn" id="av-pick">Upload photo</button>
+          <button type="button" class="btn" id="av-clear" hidden>Remove</button></div>
+        <input type="file" id="av-file" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
+        <div class="cropper" id="cropper" hidden></div>
+        <input type="hidden" name="avatar" value="${esc(state.settings.avatar || '')}">
+        <span class="hint">Pick a picture, then drag and zoom to choose the part you want to show.</span></div>
+      <div class="field"><label for="p-name">Display name</label>
+        <input type="text" id="p-name" name="name" maxlength="40" autocomplete="off" value="${esc(state.settings.name || '')}" placeholder="${esc(profName())}"></div>
+      <div class="error" role="alert"></div>
+      <div class="actions"><span class="spacer"></span><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Save</button></div>
+    </form>`,
+    {
+      onOpen(form) {
+        const av = form.querySelector('input[name="avatar"]');
+        const prev = form.querySelector('#av-prev');
+        const clear = form.querySelector('#av-clear');
+        const nameEl = form.querySelector('#p-name');
+        const show = () => {
+          const letter = (nameEl.value.trim()[0] || profName()[0] || '?').toUpperCase();
+          prev.innerHTML = `<span class="avatar xl">${av.value ? `<img src="${esc(av.value)}" alt="">` : esc(letter)}</span>`;
+          clear.hidden = !av.value;
+        };
+        nameEl.addEventListener('input', show);
+        show();
+        const fileEl = form.querySelector('#av-file');
+        form.querySelector('#av-pick').addEventListener('click', () => fileEl.click());
+        clear.addEventListener('click', () => { av.value = ''; show(); });
+        fileEl.addEventListener('change', async () => {
+          const f = fileEl.files[0];
+          fileEl.value = '';
+          if (!f) return;
+          const err = form.querySelector('.error');
+          try {
+            err.textContent = '';
+            const out = await cropLogo(f, form.querySelector('#cropper'));
+            if (out) av.value = out;
+          } catch {
+            err.textContent = 'That file could not be read as a picture. Try a PNG or JPEG.';
+          }
+          show();
+        });
+        document.activeElement?.blur?.();
+      },
+      onSubmit(fd) {
+        const name = (fd.get('name') || '').trim().slice(0, 40);
+        const avatar = validLogo(fd.get('avatar') || '');
+        setState({ ...state, settings: { ...state.settings, name, avatar, updatedAt: Date.now() } });
+        toast('Profile saved');
+      },
+    },
+  );
 }
 
 function viewWallets() {
@@ -407,7 +583,7 @@ function accountCard() {
     <div class="btns">
       <button class="btn" data-action="sync">Sync now</button>
       <button class="btn" data-action="change-password">Change password</button>
-      <button class="btn" data-action="signout">Sign out</button>
+      <button class="btn" data-action="tab" data-tab="profile">Profile</button>
     </div>
   </div>`;
 }
@@ -701,8 +877,10 @@ function render() {
     return;
   }
   renderNav();
-  const views = { home: viewHome, transactions: viewTransactions, wallets: viewWallets, insights: viewInsights, categories: viewCategories, themes: viewThemes, settings: viewSettings };
+  const views = { home: viewHome, transactions: viewTransactions, wallets: viewWallets, insights: viewInsights, categories: viewCategories, themes: viewThemes, settings: viewSettings, profile: viewProfile };
   $('#main').innerHTML = views[ui.tab]();
+  $('#main').classList.toggle('wide', ui.tab === 'home');
+  drawHome();
   drawInsights();
   drawGraphPreviews();
 }
@@ -1159,6 +1337,12 @@ document.addEventListener('click', async (e) => {
         toast('All transactions deleted');
       }
       break;
+    case 'bell':
+      openBellDialog();
+      break;
+    case 'edit-profile':
+      openProfileDialog();
+      break;
     case 'signout': {
       // push the latest changes first, because signing out clears this device's copy
       const ok = await runSync();
@@ -1323,7 +1507,7 @@ $('#fab').addEventListener('click', () => openTxDialog());
 let resizeFrame;
 window.addEventListener('resize', () => {
   cancelAnimationFrame(resizeFrame);
-  resizeFrame = requestAnimationFrame(drawInsights);
+  resizeFrame = requestAnimationFrame(() => { drawInsights(); drawHome(); });
 });
 document.addEventListener('pointerdown', (e) => {
   if (!e.target.closest('[data-i]')) hideTip();
@@ -1353,6 +1537,15 @@ window.addEventListener('beforeinstallprompt', (e) => {
   e.preventDefault();
   deferredInstall = e;
   if (ui.tab === 'settings') render();
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && e.target?.id === 'topsearch') {
+    ui.q = e.target.value.trim();
+    ui.tab = 'transactions';
+    render();
+    window.scrollTo(0, 0);
+  }
 });
 
 // ---------- start ----------

@@ -120,7 +120,7 @@ export const DEFAULT_ACCOUNT_ID = 'c0a7f3e2-5b1d-4f6a-9c84-2d3e7a1b6f90';
 export function createState() {
   return {
     version: SCHEMA_VERSION,
-    settings: { currency: 'EGP', theme: 'neon', graph: 'classic', updatedAt: 0 },
+    settings: { currency: 'EGP', theme: 'neon', graph: 'classic', name: '', avatar: '', updatedAt: 0 },
     accounts: [{ id: DEFAULT_ACCOUNT_ID, name: 'Cash', opening: 0, updatedAt: 0 }],
     categories: DEFAULT_CATEGORIES.map(([id, name, type]) => ({ id, name, type, budget: 0, updatedAt: 0 })),
     transactions: [],
@@ -158,7 +158,7 @@ export function mergeCollections(local, remote) {
 export function mergeState(local, remote) {
   const ls = local.settings;
   const rs = remote.settings;
-  const settings = rs && (rs.updatedAt ?? 0) > (ls.updatedAt ?? 0) ? { ...ls, ...rs, theme: rs.theme || ls.theme, graph: rs.graph || ls.graph } : ls;
+  const settings = rs && (rs.updatedAt ?? 0) > (ls.updatedAt ?? 0) ? { ...ls, ...rs, theme: rs.theme || ls.theme, graph: rs.graph || ls.graph, name: rs.name ?? ls.name ?? '', avatar: rs.avatar ?? ls.avatar ?? '' } : ls;
   return {
     ...local,
     settings,
@@ -232,7 +232,9 @@ export function sanitizeState(obj) {
   const updatedAt = Number.isFinite(obj.settings?.updatedAt) ? obj.settings.updatedAt : 0;
   const graph = isGraph(obj.settings?.graph) ? obj.settings.graph : DEFAULT_GRAPH;
   const theme = isTheme(obj.settings?.theme) ? obj.settings.theme : DEFAULT_THEME;
-  return { version: SCHEMA_VERSION, settings: { currency, theme, graph, updatedAt }, categories, accounts, transactions };
+  const name = typeof obj.settings?.name === 'string' ? obj.settings.name.trim().slice(0, 40) : '';
+  const avatar = validLogo(obj.settings?.avatar);
+  return { version: SCHEMA_VERSION, settings: { currency, theme, graph, name, avatar, updatedAt }, categories, accounts, transactions };
 }
 
 // ---------- summaries ----------
