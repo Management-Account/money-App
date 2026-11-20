@@ -395,14 +395,14 @@ function deckItems(w, s) {
   const n = w.accounts.length;
   const items = [{
     key: 'total', title: 'Total balance', sub: `Across ${n} account${n === 1 ? '' : 's'}`, value: w.total, pill: `${n} account${n === 1 ? '' : 's'}`,
-    icon: `<span class="dc-ico">${ICONS.wallets}</span>`, h1: 262, h2: 200,
+    icon: `<span class="dc-ico">${ICONS.wallets}</span>`, x1: 12, x2: 62,
     chips: [`Income +${money(s.income)}`, `Spent −${money(s.expense)}`],
   }];
   for (const a of w.accounts) {
     const h = hueOf(a.id);
     items.push({
       key: a.id, title: a.name, sub: (institutionOf(a.institution) || {}).name && institutionOf(a.institution).name !== a.name ? institutionOf(a.institution).name : 'Account', value: a.balance,
-      pill: `${a.count} transaction${a.count === 1 ? '' : 's'}`, icon: acctIcon(a), h1: h, h2: (h + 140) % 360,
+      pill: `${a.count} transaction${a.count === 1 ? '' : 's'}`, icon: acctIcon(a), x1: 4 + (h % 34), x2: 38 + ((h >> 3) % 52),
       chips: [`In +${money(a.income)}`, `Out −${money(a.expense)}`],
     });
   }
@@ -415,19 +415,19 @@ function deckHTML(w, s) {
   if (ui.deck >= n || ui.deck < 0) ui.deck = 0;
   const cards = items.map((it, i) => {
     const rel = (i - ui.deck + n) % n;
-    return `<article class="dcard" data-i="${i}" data-rel="${Math.min(rel, 3)}" ${rel ? 'aria-hidden="true"' : ''} style="--h1:${it.h1};--h2:${it.h2}">
+    return `<article class="dcard" data-i="${i}" data-rel="${Math.min(rel, 3)}" ${rel ? 'aria-hidden="true"' : ''} data-key="${esc(it.key)}" style="--x1:${it.x1}%;--x2:${it.x2}%">
       <span class="dc-badge">${it.icon}</span><span class="dc-pill">${esc(it.pill)}</span>
       <div class="dc-title">${esc(it.title)}</div><div class="dc-sub">${esc(it.sub)}</div>
       <div class="dc-value ${it.value < 0 ? 'neg' : ''}">${esc(money(it.value))}</div>
       <div class="dc-chips">${it.chips.map((c) => `<span>${esc(c)}</span>`).join('')}</div>
     </article>`;
   }).join('');
-  return `<section class="deck" role="group" aria-roledescription="carousel" aria-label="Balances. Swipe left for the next card" tabindex="0" data-n="${n}">
+  return `<section class="deck" role="group" aria-roledescription="carousel" aria-label="Balances. Swipe left for the next card, press Enter to see its transactions" tabindex="0" data-n="${n}">
     <div class="deck-stage">${cards}</div>
     ${n > 1 ? `<div class="deck-nav"><button class="icon-pill sm" data-deck="prev" aria-label="Previous card">\u2039</button>
       <div class="dots">${items.map((it, i) => `<button class="dot ${i === ui.deck ? 'on' : ''}" data-deck="${i}" aria-label="${esc(it.title)}"></button>`).join('')}</div>
       <button class="icon-pill sm" data-deck="next" aria-label="Next card">\u203a</button></div>` : ''}
-    <div class="deck-foot"><span class="hint" aria-live="polite" id="deck-count">${esc(items[ui.deck].title)}${n > 1 ? ` · ${ui.deck + 1} of ${n}` : ''}</span><button class="link" data-action="tab" data-tab="wallets">Manage accounts</button></div>
+    <div class="deck-foot"><span class="hint" aria-live="polite" id="deck-count" title="Tap the card to see its transactions">${esc(items[ui.deck].title)}${n > 1 ? ` · ${ui.deck + 1} of ${n}` : ''}</span><button class="link" data-action="tab" data-tab="wallets">Manage accounts</button></div>
   </section>`;
 }
 
@@ -470,9 +470,23 @@ function mountDeck() {
     layout();
     setTimeout(() => { busy = false; }, 420);
   };
+  const open = () => {
+    const key = cards[ui.deck].dataset.key;
+    ui.acct = key === 'total' ? '' : key;
+    ui.q = '';
+    ui.ttype = '';
+    ui.txLimit = 50;
+    ui.tab = 'transactions';
+    render();
+    window.scrollTo(0, 0);
+  };
+  let moved = false;
   deck.addEventListener('click', (e) => {
     const b = e.target.closest('[data-deck]');
-    if (!b) return;
+    if (!b) {
+      if (!moved && e.target.closest('.dcard[data-rel="0"]')) open();
+      return;
+    }
     const v = b.dataset.deck;
     if (v === 'next') next();
     else if (v === 'prev') prev();
@@ -481,6 +495,7 @@ function mountDeck() {
   deck.addEventListener('keydown', (e) => {
     if (e.key === 'ArrowLeft') { prev(); e.preventDefault(); }
     if (e.key === 'ArrowRight') { next(); e.preventDefault(); }
+    if (e.key === 'Enter' && e.target === deck) { open(); e.preventDefault(); }
   });
   // swipe / drag the front card
   const stage = deck.querySelector('.deck-stage');
@@ -488,12 +503,12 @@ function mountDeck() {
   let dx = 0;
   stage.addEventListener('pointerdown', (e) => {
     if (n < 2 || busy) return;
-    sx = e.clientX; dx = 0;
-    stage.setPointerCapture(e.pointerId);
+    sx = e.clientX; dx = 0; moved = false;
   });
   stage.addEventListener('pointermove', (e) => {
     if (sx === null) return;
     dx = e.clientX - sx;
+    if (Math.abs(dx) > 6 && !moved) { moved = true; stage.setPointerCapture(e.pointerId); }
     const front = cards[ui.deck];
     front.style.transition = 'none';
     front.style.transform = `translateX(${dx}px) rotate(${dx / 28}deg)`;
@@ -507,6 +522,7 @@ function mountDeck() {
     if (dx < -60) next();
     else if (dx > 60) prev();
     dx = 0;
+    setTimeout(() => { moved = false; }, 0);
   };
   stage.addEventListener('pointerup', end);
   stage.addEventListener('pointercancel', end);
