@@ -149,3 +149,6 @@ alter table public.settings add column if not exists intro_style text not null d
 Insights: even spacing between sections (new "Income and spending" heading, no cramped cards), tiles aligned to the top.
 Phones: no live blur or heavy shadows, the page background is painted once instead of `background-attachment: fixed`, the hero blob no longer animates, tap delay removed, 44px touch targets, 16px inputs (no zoom on focus), and small-phone fixes (Expense/Income/Transfer selector, balance chips, tab labels).
 Service worker is now cache-first (no network requests on launch) and the app reloads once when a new version takes over so old and new files never mix.
+
+## v34
+The arrows (balance card, deck, month switcher) and the + button now use drawn icons instead of typed characters, so they sit exactly in the middle of their circles.

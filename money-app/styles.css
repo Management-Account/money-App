@@ -1016,3 +1016,11 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   .nav > button .lbl-s { display: block; max-width: 100%; font-size: .56rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .nav .ico { width: 30px; }
 }
+
+/* arrows and plus: centred exactly */
+.fab, .icon-btn, .icon-pill { display: grid; place-items: center; padding: 0; line-height: 0; }
+.fab svg { width: 28px; height: 28px; display: block; }
+.icon-btn svg { width: 20px; height: 20px; display: block; }
+.icon-pill svg { width: 22px; height: 22px; display: block; }
+.icon-pill.sm svg { width: 18px; height: 18px; }
+.icon-btn svg, .icon-pill svg { stroke-width: 2.2; }

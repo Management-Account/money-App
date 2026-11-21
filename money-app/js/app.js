@@ -175,6 +175,10 @@ function download(name, text, type) {
 const svg = (inner) =>
   `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;
 
+// Arrow and plus symbols are drawn, not typed, so they sit exactly in the middle of their buttons.
+const CHEV_L = svg('<path d="M15 5l-6 7 6 7"/>');
+const CHEV_R = svg('<path d="M9 5l6 7-6 7"/>');
+
 const ICONS = {
   home: svg('<path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/>'),
   transactions: svg('<path d="M8 6h13M8 12h13M8 18h13"/><circle cx="3.5" cy="6" r="1"/><circle cx="3.5" cy="12" r="1"/><circle cx="3.5" cy="18" r="1"/>'),
@@ -368,9 +372,9 @@ function playIntro(id) {
 
 function monthSwitcher() {
   return `<div class="month">
-    <button class="icon-btn" data-action="prev-month" aria-label="Previous month">‹</button>
+    <button class="icon-btn" data-action="prev-month" aria-label="Previous month">${CHEV_L}</button>
     <span class="name">${esc(monthLabel(ui.month))}</span>
-    <button class="icon-btn" data-action="next-month" aria-label="Next month">›</button>
+    <button class="icon-btn" data-action="next-month" aria-label="Next month">${CHEV_R}</button>
   </div>`;
 }
 
@@ -580,9 +584,9 @@ function deckHTML(w, s) {
   }).join('');
   return `<section class="deck" role="group" aria-roledescription="carousel" aria-label="Balances. Swipe left for the next card, press Enter to see its transactions" tabindex="0" data-n="${n}">
     <div class="deck-stage">${cards}</div>
-    ${n > 1 ? `<div class="deck-nav"><button class="icon-pill sm" data-deck="prev" aria-label="Previous card">\u2039</button>
+    ${n > 1 ? `<div class="deck-nav"><button class="icon-pill sm" data-deck="prev" aria-label="Previous card">${CHEV_L}</button>
       <div class="dots">${items.map((it, i) => `<button class="dot ${i === ui.deck ? 'on' : ''}" data-deck="${i}" aria-label="${esc(it.title)}"></button>`).join('')}</div>
-      <button class="icon-pill sm" data-deck="next" aria-label="Next card">\u203a</button></div>` : ''}
+      <button class="icon-pill sm" data-deck="next" aria-label="Next card">${CHEV_R}</button></div>` : ''}
     <div class="deck-foot"><span class="hint" aria-live="polite" id="deck-count" title="Tap the card to see its transactions">${esc(items[ui.deck].title)}${n > 1 ? ` · ${ui.deck + 1} of ${n}` : ''}</span><button class="link" data-action="tab" data-tab="wallets">Manage accounts</button></div>
   </section>`;
 }
@@ -601,9 +605,9 @@ function heroNavHTML(w, s) {
   const it = items[ui.deck];
   return `<section class="card hero hero-nav" role="group" aria-roledescription="carousel" aria-label="Balances" data-n="${n}"><span class="blob" aria-hidden="true"></span>
     <div class="hn-body" data-action="open-acct" data-key="${esc(it.key)}" role="button" tabindex="0" aria-live="polite">${heroBody(it)}</div>
-    ${n > 1 ? `<div class="hn-nav"><button class="icon-pill sm" data-hn="prev" aria-label="Previous account">\u2039</button>
+    ${n > 1 ? `<div class="hn-nav"><button class="icon-pill sm" data-hn="prev" aria-label="Previous account">${CHEV_L}</button>
       <div class="dots">${items.map((x, i) => `<button class="dot ${i === ui.deck ? 'on' : ''}" data-hn="${i}" aria-label="${esc(x.title)}"></button>`).join('')}</div>
-      <button class="icon-pill sm" data-hn="next" aria-label="Next account">\u203a</button></div>` : ''}
+      <button class="icon-pill sm" data-hn="next" aria-label="Next account">${CHEV_R}</button></div>` : ''}
   </section>`;
 }
 
