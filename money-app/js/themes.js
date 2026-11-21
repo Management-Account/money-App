@@ -37,3 +37,27 @@ export const DEFAULT_ACCOUNT_LIST = 'hide';
 export const isAccountList = (id) => ACCOUNT_LIST_OPTIONS.some((o) => o.id === id);
 export const DEFAULT_GRAPH = 'classic';
 export const isGraph = (id) => GRAPH_STYLES.some((g) => g.id === id);
+
+export const NAV_STYLES = [
+  { id: 'default', name: 'Standard', blurb: 'The classic highlight with no extra motion.' },
+  { id: 'pill', name: 'Gliding pill', blurb: 'A highlight glides to the next tab with a small spring. Pages fade up.' },
+  { id: 'bubble', name: 'Liquid bubble', blurb: 'A blob flows to the next icon and stretches like liquid. Pages fade up.' },
+  { id: 'expand', name: 'Expanding label', blurb: 'On phones the active tab grows into a pill and shows its name. On wide screens it glides like the pill.' },
+  { id: 'tabs', name: 'Swipe tabs', blurb: 'An underline slides along the tabs and pages swipe in from the side you are moving towards.' },
+  { id: 'press', name: 'Press-in buttons', blurb: 'Raised buttons sink in with a small light and a ring, like a hardware knob.' },
+  { id: 'dock', name: 'Magnifying dock', blurb: 'Icons swell near your cursor and hop when chosen. Page cards rise in one by one.' },
+  { id: 'spot', name: 'Spotlight and page flip', blurb: 'A beam of light follows the active tab and pages turn like a card in 3D.' },
+];
+export const DEFAULT_NAV = 'default';
+export const isNavStyle = (id) => NAV_STYLES.some((n) => n.id === id);
+export const INTRO_STYLES = [
+  { id: 'off', name: 'None', blurb: 'The app opens straight away.' },
+  { id: 'cascade', name: 'Cascade', blurb: 'Cards rise one after another and the balance counts up.' },
+  { id: 'draw', name: 'Draw-in', blurb: 'Cards pop into place, then the charts draw themselves.' },
+  { id: 'splash', name: 'Logo splash', blurb: 'The logo pops in, then the screen zooms through into the app.' },
+  { id: 'liquid', name: 'Liquid fill', blurb: 'A wave of theme colour rises over the app, then lifts away.' },
+  { id: 'circle', name: 'Circle reveal', blurb: 'The logo pulses, then a circle opens from it and shows the app.' },
+  { id: 'skeleton', name: 'Skeleton shimmer', blurb: 'Grey blocks shimmer for a moment, then the real content swaps in.' },
+];
+export const DEFAULT_INTRO = 'off';
+export const isIntroStyle = (id) => INTRO_STYLES.some((n) => n.id === id);

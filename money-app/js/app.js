@@ -1,7 +1,7 @@
 import { pickerHTML, mountPicker } from './picker.js';
 import { EMOJI_GROUPS, categoryEmoji, suggestEmoji, validEmoji } from './emoji.js';
 import { categoryColor, nextColor, validColor, PALETTE } from './colors.js';
-import { THEMES, DEFAULT_THEME, isTheme, themeMeta, GRAPH_STYLES, DEFAULT_GRAPH, isGraph, BALANCE_STYLES, DEFAULT_BALANCE, isBalance, ACCOUNT_LIST_OPTIONS, DEFAULT_ACCOUNT_LIST, isAccountList } from './themes.js';
+import { THEMES, DEFAULT_THEME, isTheme, themeMeta, GRAPH_STYLES, DEFAULT_GRAPH, isGraph, BALANCE_STYLES, DEFAULT_BALANCE, isBalance, ACCOUNT_LIST_OPTIONS, DEFAULT_ACCOUNT_LIST, isAccountList, NAV_STYLES, DEFAULT_NAV, isNavStyle, INTRO_STYLES, DEFAULT_INTRO, isIntroStyle } from './themes.js';
 import { institutionOf, badgeHTML } from './institutions.js';
 import {
   SCHEMA_VERSION, uid, todayStr, monthKey, shiftMonth, toMinor, fromMinor, formatMoney, createState, live, upsert, remove,
@@ -224,6 +224,146 @@ function renderNav() {
     (signedIn ? `<button class="navout" data-action="signout" aria-label="Sign Out"><span class="ico">${ICONS.signout}</span><span class="lbl">Sign Out</span></button>` : '') +
     `<div class="nav-foot"><button class="mini-profile" data-action="tab" data-tab="profile" aria-label="Your profile" ${ui.tab === 'profile' ? 'aria-current="page"' : ''}>` +
     `${avatarHTML('sm')}<span class="mp-text"><b>${esc(profName())}</b><small>${esc(userHandle())}</small></span></button></div>`;
+}
+
+// ---------- navigation and opening animations ----------
+
+const reduceMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+const navStyle = () => (isNavStyle(state.settings.nav) ? state.settings.nav : DEFAULT_NAV);
+const introStyle = () => (isIntroStyle(state.settings.intro) ? state.settings.intro : DEFAULT_INTRO);
+let introPending = true;
+const IND_STYLES = new Set(['pill', 'expand', 'tabs', 'spot']);
+const PAGE_FX = { pill: 'fade', bubble: 'fade', expand: 'fade', tabs: 'slide', press: 'fade', dock: 'stagger', spot: 'flip' };
+
+function ensureGooFilter() {
+  if (document.getElementById('nfx-svg')) return;
+  document.body.insertAdjacentHTML('beforeend', '<svg id="nfx-svg" width="0" height="0" style="position:absolute" aria-hidden="true"><filter id="nfx-goo"><feGaussianBlur in="SourceGraphic" stdDeviation="6" result="b"/><feColorMatrix in="b" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 20 -9"/></filter></svg>');
+}
+
+// Called after every nav render. The nav is rebuilt each time, so the last position is remembered to animate from.
+function mountNavFx() {
+  const nav = $('#nav'), style = navStyle();
+  document.body.dataset.nav = style;
+  const prev = ui.navFx || {};
+  const btn = nav.querySelector(':scope > button[aria-current="page"][data-tab]');
+  const moved = !!btn && !!prev.tab && prev.tab !== ui.tab && !reduceMotion();
+  ui.navFx = { tab: ui.tab, rect: prev.rect, blob: prev.blob };
+  if (style === 'default' || !btn) return;
+  if (moved) btn.classList.add('nfx-go');
+  if (IND_STYLES.has(style)) {
+    const ind = document.createElement('span');
+    ind.className = 'nfx nfx-ind';
+    nav.prepend(ind);
+    const to = { x: btn.offsetLeft, y: btn.offsetTop, w: btn.offsetWidth, h: btn.offsetHeight };
+    const from = moved && prev.rect ? prev.rect : to;
+    const set = (r) => { ind.style.width = `${r.w}px`; ind.style.height = `${r.h}px`; ind.style.transform = `translate(${r.x}px,${r.y}px)`; };
+    ind.style.transition = 'none';
+    set(from);
+    void ind.offsetWidth;
+    ind.style.transition = '';
+    set(to);
+    ui.navFx.rect = to;
+  }
+  if (style === 'bubble') {
+    ensureGooFilter();
+    const ico = btn.querySelector('.ico');
+    const to = { x: btn.offsetLeft + ico.offsetLeft + ico.offsetWidth / 2 - 22, y: btn.offsetTop + ico.offsetTop + ico.offsetHeight / 2 - 22 };
+    const from = moved && prev.blob ? prev.blob : to;
+    const goo = document.createElement('div');
+    goo.className = 'nfx nfx-goo';
+    goo.innerHTML = '<span class="nfx-blob nfx-b2"></span><span class="nfx-blob nfx-b1"></span>';
+    nav.prepend(goo);
+    const bs = [...goo.children];
+    bs.forEach((b) => { b.style.transition = 'none'; b.style.transform = `translate(${from.x}px,${from.y}px)`; });
+    void goo.offsetWidth;
+    bs.forEach((b) => { b.style.transition = ''; b.style.transform = `translate(${to.x}px,${to.y}px)`; });
+    ui.navFx.blob = to;
+  }
+  if (style === 'press' && moved) {
+    const ring = document.createElement('span');
+    ring.className = 'nfx nfx-ring';
+    btn.appendChild(ring);
+    setTimeout(() => ring.remove(), 700);
+  }
+}
+
+function initNavFx() {
+  const nav = $('#nav');
+  nav.addEventListener('pointermove', (e) => {
+    if (navStyle() !== 'dock' || e.pointerType === 'touch') return;
+    nav.querySelectorAll(':scope > button .ico').forEach((ic) => {
+      const r = ic.getBoundingClientRect();
+      const d = Math.hypot(e.clientX - (r.left + r.width / 2), e.clientY - (r.top + r.height / 2));
+      ic.style.transform = `scale(${(1 + 0.5 * Math.max(0, 1 - d / 80)).toFixed(3)})`;
+    });
+  });
+  nav.addEventListener('pointerleave', () => nav.querySelectorAll('.ico').forEach((ic) => { ic.style.transform = ''; }));
+  let rt;
+  window.addEventListener('resize', () => {
+    clearTimeout(rt);
+    rt = setTimeout(() => { if (navStyle() === 'default' || document.body.classList.contains('auth-mode')) return; ui.navFx = { tab: ui.tab }; renderNav(); mountNavFx(); }, 160);
+  });
+}
+
+// Page change animation for the chosen navigation style.
+function pageFx() {
+  const prevTab = ui.lastTab;
+  ui.lastTab = ui.tab;
+  const kind = PAGE_FX[navStyle()];
+  if (!kind || !prevTab || prevTab === ui.tab || reduceMotion()) return;
+  const order = [...TABS.map((t) => t[0]), 'profile'];
+  const main = $('#main');
+  main.style.setProperty('--pd', order.indexOf(ui.tab) >= order.indexOf(prevTab) ? 1 : -1);
+  if (kind === 'stagger') [...main.children].forEach((c, i) => c.style.setProperty('--pi', Math.min(i, 7)));
+  main.classList.remove('pgx-fade', 'pgx-slide', 'pgx-flip', 'pgx-stagger');
+  void main.offsetWidth;
+  main.classList.add(`pgx-${kind}`);
+  clearTimeout(ui.pgT);
+  ui.pgT = setTimeout(() => main.classList.remove(`pgx-${kind}`), 900);
+}
+
+// Opening animation. Content styles animate the real page; the others cover it with a themed layer first.
+function playIntro(id) {
+  if (!isIntroStyle(id) || id === 'off' || reduceMotion() || document.body.classList.contains('auth-mode')) return;
+  document.getElementById('intro')?.remove();
+  clearTimeout(ui.inT);
+  const body = document.body, main = $('#main');
+  const base = { cascade: 0.1, draw: 0.1, splash: 1.6, liquid: 1.4, circle: 1.1, skeleton: 1.3 }[id];
+  body.style.setProperty('--ibase', `${base}s`);
+  body.classList.remove('ixm-cascade', 'ixm-draw');
+  body.classList.add(id === 'draw' ? 'ixm-draw' : 'ixm-cascade');
+  [...main.children].flatMap((c) => (c.classList.contains('dash') ? [...c.children] : [c])).forEach((c, i) => { c.classList.add('ix'); c.style.setProperty('--ii', Math.min(i, 9)); });
+  main.querySelectorAll('.chart-svg .line, .chart-svg .wave-line').forEach((p) => p.setAttribute('pathLength', '1'));
+  const hv = main.querySelector('.hero-value, .dcard[data-rel="0"] .dc-value');
+  if (hv) {
+    const total = accountSummaries(state).total, token = (ui.cnt = (ui.cnt || 0) + 1);
+    hv.textContent = money(0);
+    setTimeout(() => {
+      const t0 = performance.now();
+      const step = (t) => { if (token !== ui.cnt) return; const p = Math.min(1, (t - t0) / 1200); hv.textContent = money(Math.round(total * (1 - Math.pow(1 - p, 3)))); if (p < 1) requestAnimationFrame(step); };
+      requestAnimationFrame(step);
+    }, (base + 0.3) * 1000);
+  }
+  const lg = `<div class="in-box"><div class="in-lg">${LOGO}</div><div class="in-wm">Pocket Ledger</div></div>`;
+  const layers = {
+    splash: lg,
+    liquid: `<svg class="in-wave" viewBox="0 0 400 24" preserveAspectRatio="none" aria-hidden="true"><path fill="currentColor" d="M0 14 Q50 0 100 14 T200 14 T300 14 T400 14 V24 H0Z"/></svg>${lg}`,
+    circle: `<span class="in-ring"></span><span class="in-ring"></span><div class="in-box"><div class="in-lg">${LOGO}</div></div>`,
+    skeleton: '<div class="sk sk-nav"></div><div class="in-sk"><div class="sk" style="height:44px;width:55%"></div><div class="sk" style="height:150px"></div><div class="sk-two"><div class="sk" style="height:130px"></div><div class="sk" style="height:130px"></div></div><div class="sk" style="height:52px"></div><div class="sk" style="height:52px"></div></div>',
+  }[id];
+  if (layers) {
+    const el = document.createElement('div');
+    el.id = 'intro';
+    el.className = `intro intro-${id}${id === 'circle' && !('registerProperty' in CSS) ? ' np' : ''}`;
+    el.setAttribute('aria-hidden', 'true');
+    el.innerHTML = layers;
+    body.appendChild(el);
+  }
+  ui.inT = setTimeout(() => {
+    document.getElementById('intro')?.remove();
+    body.classList.remove('ixm-cascade', 'ixm-draw');
+    document.querySelectorAll('.ix').forEach((c) => { c.classList.remove('ix'); c.style.removeProperty('--ii'); });
+  }, 4300);
 }
 
 function monthSwitcher() {
@@ -614,7 +754,7 @@ function viewHome() {
       <section class="card chart-card d-month"><h2>Monthly overview</h2><div class="ch" id="ch-six"></div></section>
       <div class="d-rest">
         ${accountListMode() === 'show' ? `${classicAccountsHTML(w, s)}<div style="height:20px"></div>` : ''}
-        <h2 style="margin-top:20px">This month</h2>${monthSwitcher()}
+        <div class="h2row mrow"><h2>This month</h2>${monthSwitcher()}</div>
         <div class="cards">
           <div class="card stat"><div class="label">Income</div><div class="value income">${esc(money(s.income))}</div></div>
           <div class="card stat"><div class="label">Expenses</div><div class="value expense">${esc(money(s.expense))}</div></div>
@@ -1137,6 +1277,20 @@ function viewThemes() {
       <span class="gprev" data-prev="${g.id}" aria-hidden="true"></span>
       <span class="th-name">${esc(g.name)}${g.id === graphStyle() ? ' <span class="th-on">✓ In use</span>' : ''}</span>
       <span class="th-blurb">${esc(g.blurb)}</span>
+    </button>`).join('')}</div>
+    <h2>Navigation style</h2>
+    <p class="hint">How the menu and page changes move. Pick one, then switch between tabs to see it.</p>
+    <div class="graphs">${NAV_STYLES.map((n) => `<button class="graphopt balopt ${n.id === navStyle() ? 'on' : ''}" data-action="navstyle" data-id="${n.id}" aria-pressed="${n.id === navStyle()}">
+      <span class="nprev np-${n.id}" aria-hidden="true"><b></b><b></b><b></b><b></b></span>
+      <span class="th-name">${esc(n.name)}${n.id === navStyle() ? ' <span class="th-on">✓ In use</span>' : ''}</span>
+      <span class="th-blurb">${esc(n.blurb)}</span>
+    </button>`).join('')}</div>
+    <h2>Opening animation</h2>
+    <p class="hint">What plays when the app opens. Choosing one plays it right now so you can see it.</p>
+    <div class="graphs">${INTRO_STYLES.map((n) => `<button class="graphopt balopt ${n.id === introStyle() ? 'on' : ''}" data-action="introstyle" data-id="${n.id}" aria-pressed="${n.id === introStyle()}">
+      <span class="iprev ip-${n.id}" aria-hidden="true"><i></i><i></i><i></i></span>
+      <span class="th-name">${esc(n.name)}${n.id === introStyle() ? ' <span class="th-on">✓ In use</span>' : ''}</span>
+      <span class="th-blurb">${esc(n.blurb)}</span>
     </button>`).join('')}</div>`;
 }
 
@@ -1166,6 +1320,7 @@ function render() {
     return;
   }
   renderNav();
+  mountNavFx();
   const views = { home: viewHome, transactions: viewTransactions, wallets: viewWallets, insights: viewInsights, categories: viewCategories, themes: viewThemes, settings: viewSettings, profile: viewProfile };
   $('#main').innerHTML = views[ui.tab]();
   $('#main').classList.toggle('wide', ui.tab === 'home');
@@ -1174,6 +1329,11 @@ function render() {
   if ($('.hero-nav')) { const ww = accountSummaries(state); mountHeroNav(ww, summarize(state, ui.month)); }
   drawInsights();
   drawGraphPreviews();
+  pageFx();
+  if (introPending) {
+    introPending = false;
+    playIntro(introStyle());
+  }
 }
 
 // ---------- dialogs ----------
@@ -1686,6 +1846,19 @@ document.addEventListener('click', async (e) => {
         toast(`${BALANCE_STYLES.find((b) => b.id === id).name} balance on`);
       }
       break;
+    case 'navstyle':
+      if (isNavStyle(id) && id !== state.settings.nav) {
+        setState({ ...state, settings: { ...state.settings, nav: id, updatedAt: Date.now() } });
+        toast(`${NAV_STYLES.find((n) => n.id === id).name} navigation on. Switch tabs to see it.`);
+      }
+      break;
+    case 'introstyle':
+      if (isIntroStyle(id)) {
+        if (id !== state.settings.intro) setState({ ...state, settings: { ...state.settings, intro: id, updatedAt: Date.now() } });
+        playIntro(id);
+        toast(id === 'off' ? 'No opening animation' : `${INTRO_STYLES.find((n) => n.id === id).name} opening saved`);
+      }
+      break;
     case 'graph':
       if (isGraph(id) && id !== state.settings.graph) {
         setState({ ...state, settings: { ...state.settings, graph: id, updatedAt: Date.now() } });
@@ -1943,6 +2116,7 @@ document.addEventListener('keydown', (e) => {
 
 // ---------- start ----------
 
+initNavFx();
 render();
 if (cloudEnabled) {
   if (getSession()) {

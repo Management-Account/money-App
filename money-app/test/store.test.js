@@ -527,3 +527,12 @@ test('net worth series: opening balances plus every movement, transfers net to z
   assert.equal(m.start, 80000);
   assert.deepEqual(m.values, [80000, 119500]);
 });
+
+test('nav and opening animation settings are kept, and bad values fall back', () => {
+  const ok = sanitizeState({ settings: { currency: 'EGP', nav: 'bubble', intro: 'liquid' } });
+  assert.equal(ok.settings.nav, 'bubble');
+  assert.equal(ok.settings.intro, 'liquid');
+  const bad = sanitizeState({ settings: { currency: 'EGP', nav: 'nope', intro: 'nope' } });
+  assert.equal(bad.settings.nav, 'default');
+  assert.equal(bad.settings.intro, 'off');
+});

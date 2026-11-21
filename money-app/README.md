@@ -133,3 +133,14 @@ Every colour in `styles.css` comes from variables on `:root`. A theme is one blo
 
 ## v30
 Classic balance style is now the original hero card with no account list underneath. Use the arrows (or dots, or the left/right keys) on the card to step through Total balance and each account; tapping the card opens that account's transactions. "Accounts list on Home" now works with either style.
+
+## v31
+Alignment pass: the Classic balance card keeps its arrows pinned to the bottom edge, the "This month" title and month switcher share one row, the + button lines up with the right edge of the content on desktop, and the Insights period chips wrap on phones instead of scrolling off-screen.
+
+## v32
+Themes tab: new "Navigation style" (Standard plus 7 animated styles) and "Opening animation" (None plus 6) options, saved per account and synced. Choosing an opening plays it straight away. **Run this once in the Supabase SQL editor** (it is also in `supabase/schema.sql`):
+
+```sql
+alter table public.settings add column if not exists nav_style text not null default '';
+alter table public.settings add column if not exists intro_style text not null default '';
+```
