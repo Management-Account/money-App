@@ -1,6 +1,6 @@
 // Service worker: caches the app shell so the app opens offline.
 // Bump CACHE whenever you deploy changes so installed copies refresh.
-const CACHE = 'pocket-ledger-v32';
+const CACHE = 'pocket-ledger-v33';
 const ASSETS = [
   './',
   './index.html',
@@ -36,20 +36,22 @@ self.addEventListener('activate', (e) => {
   );
 });
 
-// Stale-while-revalidate for same-origin GET requests.
+// Cache-first: every file is stored with the versioned cache, so nothing is fetched from the network on launch.
+// New versions arrive when CACHE changes. Pages (navigations) fall back to the cached shell when offline.
 self.addEventListener('fetch', (e) => {
   const req = e.request;
   if (req.method !== 'GET' || new URL(req.url).origin !== self.location.origin) return;
   e.respondWith(
     caches.open(CACHE).then(async (cache) => {
       const cached = await cache.match(req, { ignoreSearch: true });
-      const network = fetch(req)
-        .then((res) => {
-          if (res.ok) cache.put(req, res.clone());
-          return res;
-        })
-        .catch(() => cached || (req.mode === 'navigate' ? cache.match('./index.html') : undefined));
-      return cached || network;
+      if (cached) return cached;
+      try {
+        const res = await fetch(req);
+        if (res.ok) cache.put(req, res.clone());
+        return res;
+      } catch {
+        return req.mode === 'navigate' ? cache.match('./index.html') : Response.error();
+      }
     }),
   );
 });

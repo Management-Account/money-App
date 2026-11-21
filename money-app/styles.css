@@ -197,11 +197,9 @@
 html { scrollbar-color: var(--sb) transparent; }
 html, body { margin: 0; }
 body {
-  min-height: 100vh;
+  min-height: 100vh; min-height: 100dvh;
   color: var(--text);
   background-color: var(--bg);
-  background-image: var(--page-bg);
-  background-attachment: fixed;
   font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   -webkit-tap-highlight-color: transparent;
 }
@@ -980,3 +978,41 @@ body.ixm-draw .chart-svg .bar { transform-box: fill-box; transform-origin: 50% 1
 @keyframes inRing { 0% { opacity: .8; transform: scale(1); } 100% { opacity: 0; transform: scale(3.2); } }
 @keyframes inShimmer { to { background-position: -150% 0; } }
 @media (prefers-reduced-motion: reduce) { .nfx-ind, .nfx-blob { transition: none; } .intro { display: none; } }
+
+/* ---------- v33: spacing fixes + phone performance ---------- */
+body::before { content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none; background-image: var(--page-bg); transform: translateZ(0); }
+.card > h2:first-child { margin-top: 0; }
+.sect { margin: 26px 0 12px; }
+.nw-list { gap: 14px; }
+.card + .tiles, .nw-card + .tiles { margin-top: 14px; }
+.tiles + .chart-card, .tiles + .card { margin-top: 14px; }
+.tile { display: grid; align-content: start; }
+.tiles.two { grid-template-columns: repeat(2, 1fr); }
+button, a, .it, [data-action], summary, label { touch-action: manipulation; }
+dialog { overscroll-behavior: contain; max-height: 92vh; max-height: 92dvh; }
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+@media (max-width: 859px) {
+  /* live blur and big soft shadows are the slow parts on phones; panels get the same look without them */
+  *, *::before, *::after { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+  .hero .blob { animation: none !important; filter: none !important; }
+  .card, .acct, .dcard, .row, .tx, .list > * { transition: none; }
+  :root:not([data-theme="mintnm"]):not([data-theme="indigonm"]):not([data-theme="knobs"]) .card { box-shadow: 0 8px 22px rgb(var(--sh) / .32), inset 0 1px 0 rgb(var(--ov) / .1); }
+  :root:not([data-theme="mintnm"]):not([data-theme="indigonm"]):not([data-theme="knobs"]) .nav { box-shadow: 0 6px 20px rgb(var(--sh) / .45); }
+  .chart-svg *, .donut * { filter: none !important; }
+  input, select, textarea { font-size: 16px; }
+  .main { padding-left: max(14px, env(safe-area-inset-left)); padding-right: max(14px, env(safe-area-inset-right)); }
+  .tiles { gap: 10px; }
+  .card { padding: 14px 15px; }
+}
+@media (pointer: coarse) { .nav > button, .icon-btn, .icon-pill, .filters button { min-height: 44px; } .icon-btn, .icon-pill { min-width: 44px; } }
+/* small phones */
+.seg { grid-auto-columns: minmax(0, 1fr); }
+.seg label { padding: 11px 4px; white-space: nowrap; }
+.dc-chips span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 380px) {
+  .dc-chips { gap: 6px; }
+  .dc-chips span { padding: 4px 9px; font-size: .7rem; }
+  .nav { padding: 0 2px; }
+  .nav > button .lbl-s { display: block; max-width: 100%; font-size: .56rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .nav .ico { width: 30px; }
+}

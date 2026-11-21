@@ -1079,8 +1079,8 @@ function netWorthHTML(d) {
         <span class="nw-val ${a.balance < 0 ? 'expense' : ''}">${esc(money(a.balance))}<small>${a.balance < 0 ? 'Below zero' : `${share}%`}</small></span></li>`;
     })
     .join('');
-  return `<h2 class="sect">Net worth</h2>
-    <div class="tiles">
+  return `<h2 class="sect" style="margin-top:18px">Net worth</h2>
+    <div class="tiles two">
       ${tile('Net worth', moneyTile(nw.now), `Across ${nw.accounts.length} account${nw.accounts.length === 1 ? '' : 's'}`, nw.now < 0 ? 'expense' : '')}
       ${tile('Change', `${sign}${moneyTile(Math.abs(nw.change))}`, d.per.name, nw.change < 0 ? 'expense' : nw.change > 0 ? 'income' : '')}
     </div>
@@ -1113,6 +1113,7 @@ function viewInsights() {
   const colHead = d.unit === 'day' ? 'Day' : 'Month';
   const balHint = d.unit === 'day' ? 'at the end of each day' : 'at the end of each month';
   return `<h1>Insights</h1>${filter}
+    <h2 class="sect">Income and spending</h2>
     <div class="tiles">
       ${tile('Income', moneyTile(d.income), d.per.name, 'income')}
       ${tile('Expenses', moneyTile(d.expense), avg, 'expense')}
@@ -2132,5 +2133,12 @@ if (cloudEnabled) {
   window.addEventListener('pagehide', () => runSync());
 }
 if ('serviceWorker' in navigator) {
+  // Reload once when a new version takes over, so old and new files are never mixed.
+  let hadController = !!navigator.serviceWorker.controller;
+  let reloaded = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (hadController && !reloaded) { reloaded = true; location.reload(); }
+    hadController = true;
+  });
   window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
 }
