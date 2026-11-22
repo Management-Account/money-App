@@ -12,11 +12,15 @@ import {
 import { getCurrencies } from './currencies.js';
 import { columnChart, lineChart, rankedBars, ringGauge, donutChart, attachTips, hideTip } from './charts.js';
 import {
-  cloudEnabled, AuthError, NetworkError, getSession, getOwner, setOwner, signUp, signIn, signOut, setPassword, syncNow, debtsTableMissing,
+  cloudEnabled, AuthError, NetworkError, getSession, getOwner, setOwner, signUp, signIn, signOut, setPassword, syncNow, debtsTableMissing, syncFamily, purgeProfileData, familyMode,
   USERNAME_RE, normalizeUsername, displayName,
 } from './sync.js';
 
-const KEY = 'pocketledger.v1';
+import { MAIN, PROFILE_COLORS, loadFamily, saveFamily, wipeFamilyLocal, profileKey, liveProfiles, profileById, newProfile, makePin, checkPin, validPin } from './family.js';
+
+let family = loadFamily();
+const activeKey = () => profileKey(family.active);
+const activeProfile = () => profileById(family, family.active) || liveProfiles(family)[0];
 const $ = (sel) => document.querySelector(sel);
 const esc = (s) =>
   String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -24,9 +28,9 @@ const byName = (a, b) => a.name.localeCompare(b.name);
 
 // ---------- state & persistence ----------
 
-function load() {
+function load(pid = family.active) {
   try {
-    const raw = localStorage.getItem(KEY);
+    const raw = localStorage.getItem(profileKey(pid));
     if (raw) {
       const s = JSON.parse(raw);
       if (s && s.version === SCHEMA_VERSION) {
@@ -44,13 +48,13 @@ function load() {
 
 let state = load();
 // auth: 'signin' | 'signup'
-const ui = { tab: 'home', month: monthKey(todayStr()), q: '', acct: '', ttype: '', txLimit: 50, lastAccount: '', deck: 0, donutSig: '', period: '6m', from: '', to: '', auth: 'signin', notice: '', busy: false };
+const ui = { tab: 'home', month: monthKey(todayStr()), q: '', acct: '', ttype: '', txLimit: 50, lastAccount: '', deck: 0, donutSig: '', period: '6m', from: '', to: '', auth: 'signin', notice: '', busy: false, lockFor: '', lockCancel: false };
 let deferredInstall = null;
 const syncInfo = { lastAt: 0, error: '' };
 
 function save() {
   try {
-    localStorage.setItem(KEY, JSON.stringify(state));
+    localStorage.setItem(activeKey(), JSON.stringify(state));
   } catch {
     toast('Could not save: browser storage is full or blocked');
   }
@@ -86,10 +90,17 @@ function runSync() {
     let ok = false;
     updateSyncLine();
     try {
-      const merged = await syncNow(state);
-      // keep any edits the person made while the sync was running (newest edit per record wins)
-      state = mergeState(state, merged);
-      save();
+      const pid = family.active;
+      const before = JSON.stringify(family.profiles);
+      family.profiles = await syncFamily(family.profiles);
+      if (!profileById(family, pid)) family.active = (profileById(family, MAIN) || liveProfiles(family)[0]).id; // deleted on another device
+      if (JSON.stringify(family.profiles) !== before) saveFamily(family);
+      if (family.active !== pid) { state = load(); ui.tab = 'home'; } else {
+        const merged = await syncNow(state, pid);
+        // keep any edits the person made while the sync was running (newest edit per record wins);
+        // if another profile was opened meanwhile, this one is simply synced again next time
+        if (family.active === pid) { state = mergeState(state, merged); save(); }
+      }
       syncInfo.lastAt = Date.now();
       syncInfo.error = '';
       ok = true;
@@ -194,6 +205,7 @@ const ICONS = {
   search: svg('<circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/>'),
   signout: svg('<path d="M9 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h4"/><path d="M16 8l4 4-4 4M20 12H9"/>'),
   debts: svg('<path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6"/>'),
+  family: svg('<circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><circle cx="17" cy="9" r="2.5"/><path d="M17 14c2.5 0 4 1.8 4 4"/>'),
   settings: svg('<path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/>'),
 };
 
@@ -211,13 +223,13 @@ const TABS = [
 
 function profName() {
   const s = getSession();
-  return (state.settings.name || '').trim() || (s ? displayName(s.user.email) : '') || 'there';
+  return (state.settings.name || '').trim() || (s && family.active === MAIN ? displayName(s.user.email) : '') || activeProfile()?.name || 'there';
 }
 function avatarHTML(cls = '') {
   const a = state.settings.avatar;
   return `<span class="avatar ${cls}" aria-hidden="true">${a ? `<img src="${esc(a)}" alt="">` : esc((profName()[0] || '?').toUpperCase())}</span>`;
 }
-const userHandle = () => { const s = getSession(); return s ? `@${displayName(s.user.email)}` : 'This device'; };
+const userHandle = () => { const s = getSession(); return family.active !== MAIN ? 'Family profile' : s ? `@${displayName(s.user.email)}` : 'This device'; };
 
 function renderNav() {
   $('#nav').innerHTML =
@@ -229,6 +241,211 @@ function renderNav() {
     ).join('') +
     `<div class="nav-foot"><button class="mini-profile" data-action="pmenu" aria-label="Your profile menu" aria-haspopup="menu" ${['profile', 'themes', 'settings'].includes(ui.tab) ? 'aria-current="page"' : ''}>` +
     `${avatarHTML('sm')}<span class="mp-text"><b>${esc(profName())}</b><small>${esc(userHandle())}</small></span></button></div>`;
+}
+
+
+// ---------- family profiles ----------
+
+const isUnlocked = (id) => { try { return sessionStorage.getItem(`pl.unlocked.${id}`) === '1'; } catch { return true; } };
+const markUnlocked = (id) => { try { sessionStorage.setItem(`pl.unlocked.${id}`, '1'); } catch { /* optional */ } };
+const needsPin = (id) => !!profileById(family, id)?.pin && !isUnlocked(id);
+const famName = (p) => (p.id === MAIN && p.name === 'Me' && getSession() ? displayName(getSession().user.email) : p.name);
+// White or near-black lettering, whichever reads better on the profile's colour.
+function inkFor(hex) {
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+  const L = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  return 1.05 / (L + 0.05) >= (L + 0.05) / 0.05 ? '#fff' : '#111';
+}
+const famInitial = (p) => (famName(p)[0] || '?').toUpperCase();
+ui.lockFor = needsPin(family.active) ? family.active : ''; // a locked profile asks for its PIN when the app opens
+
+// Push the profiles that are not open right now (before signing out, which clears this device's copy).
+async function syncOtherProfiles() {
+  if (!cloudEnabled || !getSession()) return true;
+  try {
+    for (const p of liveProfiles(family)) {
+      if (p.id === family.active) continue;
+      if (!localStorage.getItem(profileKey(p.id))) continue; // never opened here: nothing to push
+      const st = load(p.id);
+      localStorage.setItem(profileKey(p.id), JSON.stringify(mergeState(st, await syncNow(st, p.id))));
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Open a profile (PIN already checked): save the current one, load the other, start from Home.
+function openProfile(id) {
+  save();
+  family.active = id;
+  saveFamily(family);
+  state = load(id);
+  Object.assign(ui, { tab: 'home', acct: '', q: '', ttype: '', lastAccount: '', deck: 0, donutSig: '', lockFor: '', lockCancel: false });
+  render();
+  scheduleSync(0);
+}
+function switchProfile(id) {
+  if (id === family.active || !profileById(family, id)) return;
+  if (needsPin(id)) {
+    ui.lockFor = id;
+    ui.lockCancel = true;
+    render();
+    return;
+  }
+  openProfile(id);
+}
+
+function mirrorProfileName(id, name) {
+  const p = profileById(family, id);
+  if (!p || p.name === name) return;
+  family.profiles = upsert(family.profiles, { ...p, name: name.trim().slice(0, 40) });
+  saveFamily(family);
+  scheduleSync();
+}
+
+function viewLock() {
+  const p = profileById(family, ui.lockFor);
+  const others = liveProfiles(family).filter((x) => x.id !== p.id);
+  return `<div class="auth">
+    <div class="auth-brand"><span class="logo">${LOGO}</span><span>Pocket Ledger</span></div>
+    <form class="card" id="lockform" novalidate>
+      <div class="fam-av big" style="--pc:${esc(p.color)};--pi:${inkFor(p.color)}" aria-hidden="true">${esc(famInitial(p))}</div>
+      <h1 style="font-size:1.25rem;text-align:center">${esc(famName(p))}</h1>
+      <p class="hint" style="text-align:center">Enter this profile's PIN.</p>
+      <div class="field"><label for="l-pin">PIN</label>
+        <input type="password" id="l-pin" name="pin" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off" required></div>
+      <div class="error" role="alert"></div>
+      <button class="btn primary wide">Unlock</button>
+      <div class="auth-links">
+        ${others.map((o) => `<button type="button" class="link" data-action="lock-switch" data-id="${esc(o.id)}">Open ${esc(famName(o))}</button>`).join('')}
+        ${ui.lockCancel ? '<button type="button" class="link" data-action="lock-cancel">Cancel</button>' : ''}
+      </div>
+    </form></div>`;
+}
+
+document.addEventListener('submit', async (e) => {
+  if (e.target.id !== 'lockform') return;
+  e.preventDefault();
+  const p = profileById(family, ui.lockFor);
+  if (!p) return;
+  const pin = String(new FormData(e.target).get('pin') || '');
+  if (await checkPin(pin, p.pin)) {
+    markUnlocked(p.id);
+    if (p.id === family.active) { ui.lockFor = ''; ui.lockCancel = false; render(); } else openProfile(p.id);
+  } else {
+    await new Promise((r) => setTimeout(r, 700)); // slows down guessing a little
+    const err = e.target.querySelector('.error');
+    if (err) err.textContent = 'That PIN is not right.';
+    const inp = e.target.querySelector('input');
+    if (inp) { inp.value = ''; inp.focus(); }
+  }
+});
+
+function familyCard() {
+  const ps = liveProfiles(family);
+  return `<div class="card">
+    <p class="hint" style="margin-top:0">Give each person in the family their own profile. Every profile keeps its own accounts, transactions, categories, debts and look, completely separate from the others. A PIN is optional.</p>
+    <div class="fam-list">${ps
+      .map((p) => `<div class="fam-row"><span class="fam-av" style="--pc:${esc(p.color)};--pi:${inkFor(p.color)}" aria-hidden="true">${esc(famInitial(p))}</span>
+        <div class="fam-who"><b>${esc(famName(p))}</b><small>${p.id === family.active ? 'Open now' : 'Separate data'}${p.pin ? ' · PIN set' : ''}</small></div>
+        ${p.id === family.active ? '' : `<button class="btn" data-action="switch-profile-to" data-id="${esc(p.id)}">Open</button>`}
+        <button class="btn" data-action="edit-family" data-id="${esc(p.id)}">Edit</button></div>`)
+      .join('')}</div>
+    <div class="btns" style="margin-top:12px"><button class="btn primary" data-action="add-family">Add a family member</button></div>
+    ${cloudEnabled && getSession() && familyMode.value === 'legacy' ? '<p class="hint">Only the first profile is saved to your account until you run the updated supabase/schema.sql once (see README). The others stay on this device.</p>' : ''}
+  </div>`;
+}
+
+function openSwitchDialog() {
+  openDialog(
+    `<form><h3>Switch profile</h3>
+      <div class="fam-list">${liveProfiles(family)
+        .map((p) => `<button type="button" class="fam-row pick" data-action="switch-profile-to" data-id="${esc(p.id)}" ${p.id === family.active ? 'aria-current="true"' : ''}>
+          <span class="fam-av" style="--pc:${esc(p.color)};--pi:${inkFor(p.color)}" aria-hidden="true">${esc(famInitial(p))}</span>
+          <span class="fam-who"><b>${esc(famName(p))}</b><small>${p.id === family.active ? 'Open now' : p.pin ? 'Locked with a PIN' : 'Separate data'}</small></span></button>`)
+        .join('')}</div>
+      <div class="error" role="alert"></div>
+      <div class="actions"><span class="spacer"></span><button type="button" class="btn" data-close>Close</button></div>
+    </form>`,
+    { onSubmit: () => false },
+  );
+}
+
+function openFamilyDialog(id) {
+  const ex = id ? profileById(family, id) : null;
+  const usedColors = liveProfiles(family).map((p) => p.color);
+  const startColor = ex ? ex.color : PROFILE_COLORS.find((c) => !usedColors.includes(c)) || PROFILE_COLORS[0];
+  const canDelete = ex && liveProfiles(family).length > 1;
+  openDialog(
+    `<form>
+      <h3>${ex ? 'Edit family member' : 'Add a family member'}</h3>
+      <div class="field"><label for="f-name">Name</label>
+        <input type="text" id="f-name" name="name" maxlength="40" autocomplete="off" value="${esc(ex ? famName(ex) : '')}"></div>
+      <div class="field"><span class="lbl">Colour</span>
+        <div class="swatches" role="radiogroup" aria-label="Colour">${PROFILE_COLORS.map((c) => `<label class="sw" style="--pc:${c}"><input type="radio" name="color" value="${c}" ${c === startColor ? 'checked' : ''}><span aria-label="${c}"></span></label>`).join('')}</div></div>
+      <div class="field"><label for="f-pin">${ex && ex.pin ? 'New PIN (leave empty to keep the current one)' : 'PIN (optional, 4 to 6 digits)'}</label>
+        <input type="password" id="f-pin" name="pin" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off">
+        <span class="hint">A PIN stops other people opening this profile on a shared phone. It is a short number, so it is not strong protection.</span></div>
+      ${ex && ex.pin ? '<label class="check"><input type="checkbox" name="nopin"><span>Remove the PIN</span></label>' : ''}
+      ${ex ? '' : '<p class="hint">A new profile starts empty, with its own accounts, categories and settings.</p>'}
+      <div class="error" role="alert"></div>
+      <div class="actions">
+        ${canDelete ? '<button type="button" class="btn danger" data-delete>Delete</button>' : ''}
+        <span class="spacer"></span><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Save</button>
+      </div>
+    </form>`,
+    {
+      confirmText: ex ? `Delete ${famName(ex)} and ALL of this profile's accounts, transactions, categories and debts? This cannot be undone.` : '',
+      onOpen(form) { if (!ex) form.querySelector('#f-name').focus(); },
+      async onSubmit(fd) {
+        const name = (fd.get('name') || '').trim();
+        if (!name) return 'Enter a name.';
+        if (liveProfiles(family).some((p) => p.id !== (ex && ex.id) && famName(p).toLowerCase() === name.toLowerCase())) return 'Someone in the family already has that name.';
+        const color = PROFILE_COLORS.includes(fd.get('color')) ? fd.get('color') : startColor;
+        const pin = String(fd.get('pin') || '');
+        if (pin && !validPin(pin)) return 'A PIN is 4 to 6 digits.';
+        let rec = ex ? { ...ex, name, color } : newProfile(name, color);
+        if (pin) rec.pin = await makePin(pin);
+        else if (fd.get('nopin')) rec.pin = '';
+        family.profiles = upsert(family.profiles, rec);
+        saveFamily(family);
+        if (pin) markUnlocked(rec.id);
+        if (!ex) {
+          // the new profile's own, empty data (currency copied from this one as a convenience)
+          const fresh = createState();
+          fresh.settings = { ...fresh.settings, currency: state.settings.currency, name, updatedAt: Date.now() };
+          try { localStorage.setItem(profileKey(rec.id), JSON.stringify(fresh)); } catch { /* storage full */ }
+          toast(`${name} added. Tap Open to switch to them.`);
+        } else {
+          if (rec.id === family.active) setState({ ...state, settings: { ...state.settings, name, updatedAt: Date.now() } });
+          else {
+            try {
+              const st = load(rec.id);
+              localStorage.setItem(profileKey(rec.id), JSON.stringify({ ...st, settings: { ...st.settings, name, updatedAt: Date.now() } }));
+            } catch { /* optional */ }
+          }
+          toast('Saved');
+        }
+        scheduleSync();
+        render();
+      },
+      onDelete() {
+        const gone = ex;
+        if (gone.id === family.active) {
+          const other = liveProfiles(family).find((p) => p.id !== gone.id);
+          openProfile(other.id);
+          if (needsPin(other.id)) { ui.lockFor = other.id; ui.lockCancel = false; }
+        }
+        family.profiles = upsert(family.profiles, { ...gone, deleted: true });
+        try { localStorage.removeItem(profileKey(gone.id)); } catch { /* ignore */ }
+        saveFamily(family);
+        toast(`${famName(gone)} deleted`);
+        render();
+        if (cloudEnabled && getSession()) runSync().then(() => purgeProfileData(gone.id)).catch(() => {});
+      },
+    },
+  );
 }
 
 // ---------- profile window (opened from the sidebar profile panel or the avatar button) ----------
@@ -251,7 +468,7 @@ function openPMenu(trigger) {
   m.innerHTML = `<div class="pm-head">${avatarHTML('lg')}<div class="pm-id"><b>${esc(profName())}</b><small>${esc(userHandle())}</small></div></div>
     <div class="pm-stats"><div><b>${liveAccounts(state).length}</b><span>Accounts</span></div><div><b>${live(state.transactions).length}</b><span>Transactions</span></div></div>
     <div class="pm-sync" aria-live="polite">${esc(syncText())}</div>
-    <div class="pm-list">${item('edit-profile', 'profile', 'Edit profile')}${item('tab', 'themes', 'Themes')}${item('tab', 'settings', 'Settings')}${signedIn ? item('signout', 'signout', 'Sign out', 'danger') : ''}</div>`;
+    <div class="pm-list">${item('edit-profile', 'profile', 'Edit profile')}${liveProfiles(family).length > 1 ? item('switch-profile', 'family', 'Switch profile') : ''}${item('tab', 'themes', 'Themes')}${item('tab', 'settings', 'Settings')}${signedIn ? item('signout', 'signout', 'Sign out', 'danger') : ''}</div>`;
   document.body.appendChild(m);
   trigger.setAttribute('aria-expanded', 'true');
   const r = trigger.getBoundingClientRect(), w = m.offsetWidth, h = m.offsetHeight, vw = innerWidth, vh = innerHeight;
@@ -935,6 +1152,7 @@ function openProfileDialog() {
         const name = (fd.get('name') || '').trim().slice(0, 40);
         const avatar = validLogo(fd.get('avatar') || '');
         setState({ ...state, settings: { ...state.settings, name, avatar, updatedAt: Date.now() } });
+        if (name) mirrorProfileName(family.active, name);
         toast('Profile saved');
       },
     },
@@ -1384,6 +1602,7 @@ function drawInsights() {
 function viewSettings() {
   return `<h1>Settings</h1>
     <h2>Login</h2>${accountCard()}
+    <h2>Family</h2>${familyCard()}
     <h2>Preferences</h2>
     <div class="card">
       <div class="field"><label for="cur">Currency</label>
@@ -1516,6 +1735,12 @@ function render() {
   if (authScreen) {
     $('#nav').innerHTML = '';
     $('#main').innerHTML = viewAuth();
+    return;
+  }
+  if (ui.lockFor && profileById(family, ui.lockFor)) {
+    document.body.classList.add('auth-mode');
+    $('#nav').innerHTML = '';
+    $('#main').innerHTML = viewLock();
     return;
   }
   renderNav();
@@ -2200,14 +2425,38 @@ document.addEventListener('click', async (e) => {
     case 'edit-profile':
       openProfileDialog();
       break;
+    case 'switch-profile':
+      openSwitchDialog();
+      break;
+    case 'switch-profile-to':
+      if (dlg.open) dlg.close();
+      switchProfile(id);
+      break;
+    case 'add-family':
+      openFamilyDialog('');
+      break;
+    case 'edit-family':
+      if (needsPin(id)) switchProfile(id); // a locked profile has to be opened (PIN) before it can be changed
+      else openFamilyDialog(id);
+      break;
+    case 'lock-switch':
+      if (needsPin(id)) { ui.lockFor = id; render(); } else openProfile(id);
+      break;
+    case 'lock-cancel':
+      ui.lockFor = '';
+      render();
+      break;
     case 'signout': {
       // push the latest changes first, because signing out clears this device's copy
-      const ok = await runSync();
+      const ok = (await runSync()) && (await syncOtherProfiles());
       if (!ok && !confirm('Your latest changes could not be saved to your account (you may be offline). Sign out anyway and lose them?')) break;
       await signOut();
       setOwner(null);
+      wipeFamilyLocal(family);
+      family = loadFamily();
       state = createState();
       save();
+      ui.lockFor = '';
       Object.assign(ui, { tab: 'home', auth: 'signin', notice: '', q: '' });
       syncInfo.lastAt = 0;
       syncInfo.error = '';
@@ -2264,7 +2513,7 @@ document.addEventListener('click', async (e) => {
 // Called after any successful sign in / sign up with a session.
 async function afterSignIn(session) {
   const owner = getOwner();
-  if (owner && owner !== session.user.id) state = createState(); // never mix another account's data in
+  if (owner && owner !== session.user.id) { wipeFamilyLocal(family); family = loadFamily(); state = createState(); } // never mix another account's data in
   setOwner(session.user.id);
   save();
   Object.assign(ui, { auth: 'signin', notice: '', tab: 'home' });

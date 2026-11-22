@@ -606,3 +606,30 @@ test('every country has banks, and worldwide providers appear under each country
   assert.ok(providersFor('invest', '').length >= 5);
   assert.equal(institutionOf('misr').name, 'Banque Misr'); // existing Egyptian ids are unchanged
 });
+
+// ---------- family profiles ----------
+import { normalizeFamily, profileKey, MAIN, makePin, checkPin, validPin, liveProfiles, mergeProfiles, newProfile } from '../js/family.js';
+test('family list always has a usable first profile and active profile', () => {
+  const f = normalizeFamily(null);
+  assert.equal(f.profiles.length, 1);
+  assert.equal(f.active, MAIN);
+  const g = normalizeFamily({ profiles: [{ id: 'x1', name: 'Maria', color: '#ffffff', updatedAt: 1 }], active: 'gone' });
+  assert.equal(g.active, 'x1');
+  assert.equal(normalizeFamily({ profiles: [{ id: MAIN, name: 'Me', deleted: true }, { id: 'a', name: 'A' }], active: MAIN }).active, 'a');
+  assert.equal(profileKey(MAIN), 'pocketledger.v1'); // existing data stays where it was
+  assert.notEqual(profileKey('abc'), profileKey(MAIN));
+});
+test('profiles merge by newest edit, keeping deletions', () => {
+  const a = { ...newProfile('Maria', '#6d5efc'), id: 'p1', updatedAt: 10 };
+  const m = mergeProfiles([a], [{ id: 'p1', name: 'Mariam', color: '#6d5efc', pin: '', updatedAt: 20 }, { id: 'p2', name: 'Omar', color: '#22c1c3', updatedAt: 5, deleted: true }]);
+  assert.equal(m.find((p) => p.id === 'p1').name, 'Mariam');
+  assert.equal(liveProfiles({ profiles: m }).length, 1);
+});
+test('PIN is stored as a salted hash and checked correctly', async () => {
+  assert.ok(validPin('1234') && validPin('123456') && !validPin('12') && !validPin('12ab') && !validPin('1234567'));
+  const h = await makePin('4821');
+  assert.ok(!h.includes('4821'));
+  assert.ok(await checkPin('4821', h));
+  assert.ok(!(await checkPin('4822', h)));
+  assert.notEqual(await makePin('4821'), h); // new salt each time
+});

@@ -4,7 +4,7 @@
 //  - Data: Supabase PostgREST endpoints       /rest/v1/*   (protected by row-level security)
 //
 // The app stays offline-first: it always works from local data and syncs in the background.
-import { mergeState } from './store.js';
+import { mergeState, mergeCollections } from './store.js';
 import * as config from './config.js'; // namespace import: an older config.js without newer settings still loads
 
 const { SUPABASE_URL, SUPABASE_ANON_KEY, USERNAME_EMAIL_DOMAIN } = config;
@@ -204,10 +204,11 @@ async function rest(path, opts = {}) {
   return http('/rest/v1/' + path, { ...opts, token: s.access_token });
 }
 
-async function fetchAll(table) {
+async function fetchAll(table, pid) {
   const out = [];
+  const filter = pid && scoped() ? `&profile_id=eq.${enc(pid)}` : '';
   for (let offset = 0; ; offset += 1000) {
-    const rows = await rest(`${table}?select=*&order=id.asc&limit=1000&offset=${offset}`);
+    const rows = await rest(`${table}?select=*${filter}&order=id.asc&limit=1000&offset=${offset}`);
     out.push(...rows);
     if (rows.length < 1000) break;
   }
@@ -247,15 +248,51 @@ const toDebt = (d) => ({
 });
 // Older projects may not have the debts table yet: sync everything else and report it instead of failing.
 export const debtsTableMissing = { value: false };
-const isMissingTable = (e) => e && (e.status === 404 || /debts/.test(e.message || '')) && !(e instanceof NetworkError);
+const isMissingTable = (e, name = 'debts') => e && !(e instanceof NetworkError) && (e.status === 404 || new RegExp(name).test(e.message || ''));
 
-async function push(table, rows) {
-  // Rows are keyed per user (user_id, id): built-in categories share ids between users.
-  const target = table === 'settings' ? table : `${table}?on_conflict=user_id,id`;
+// 'unknown' until the first sync, then 'on' (profiles table and profile_id columns exist) or 'legacy' (older schema:
+// only the first profile syncs, as before).
+export const familyMode = { value: 'unknown' };
+const scoped = () => familyMode.value === 'on';
+const enc = encodeURIComponent;
+
+const fromProfile = (r) => ({ id: r.id, name: r.name, color: r.color || '', pin: r.pin || '', updatedAt: Number(r.updated_at) || 0, ...(r.deleted ? { deleted: true } : {}) });
+const toProfile = (p) => ({ id: p.id, name: p.name, color: p.color || '', pin: p.pin || '', updated_at: p.updatedAt || 0, deleted: !!p.deleted });
+
+// Merge the family list with the account's (newest edit per profile wins) and push back what is newer here.
+export async function syncFamily(profiles) {
+  let rows;
+  try {
+    rows = await fetchAll('profiles');
+  } catch (e) {
+    if (isMissingTable(e, 'profiles')) { familyMode.value = 'legacy'; return profiles; }
+    throw e;
+  }
+  familyMode.value = 'on';
+  const remote = rows.map(fromProfile);
+  const merged = mergeCollections(profiles, remote);
+  const seen = new Map(remote.map((r) => [r.id, r.updatedAt]));
+  const newer = merged.filter((x) => !seen.has(x.id) || x.updatedAt > seen.get(x.id));
+  if (newer.length) await push('profiles', newer.map(toProfile));
+  return merged;
+}
+
+// Remove a deleted profile's rows from the account (best effort; the profile itself stays as a deleted marker).
+export async function purgeProfileData(pid) {
+  if (!scoped()) return;
+  for (const t of ['transactions', 'accounts', 'categories', 'debts', 'settings']) {
+    try { await rest(`${t}?profile_id=eq.${enc(pid)}`, { method: 'DELETE' }); } catch (e) { if (e instanceof NetworkError) throw e; }
+  }
+}
+
+async function push(table, rows, pid) {
+  // Rows are keyed per user (and per profile once family profiles exist): built-in categories share ids between users.
+  const withProfile = pid && scoped();
+  const keys = table === 'profiles' ? 'user_id,id' : table === 'settings' ? (withProfile ? 'user_id,profile_id' : 'user_id') : withProfile ? 'user_id,profile_id,id' : 'user_id,id';
   for (let i = 0; i < rows.length; i += 500) {
-    await rest(target, {
+    await rest(`${table}?on_conflict=${keys}`, {
       method: 'POST',
-      body: rows.slice(i, i + 500),
+      body: rows.slice(i, i + 500).map((r) => (withProfile ? { ...r, profile_id: pid } : r)),
       headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
     });
   }
@@ -263,10 +300,11 @@ async function push(table, rows) {
 
 // Pull the account's data, merge it with local data (newest edit per record wins), push back
 // whatever is newer locally, and return the merged state.
-export async function syncNow(state) {
+export async function syncNow(state, pid = 'main') {
+  if (familyMode.value === 'legacy' && pid !== 'main') return state; // older schema: only the first profile is saved to the account
   const [rc, ra, rt, rs, rd] = await Promise.all([
-    fetchAll('categories'), fetchAll('accounts'), fetchAll('transactions'), rest('settings?select=*'),
-    fetchAll('debts').catch((e) => { if (isMissingTable(e)) return null; throw e; }),
+    fetchAll('categories', pid), fetchAll('accounts', pid), fetchAll('transactions', pid), rest(`settings?select=*${scoped() ? `&profile_id=eq.${enc(pid)}` : ''}`),
+    fetchAll('debts', pid).catch((e) => { if (isMissingTable(e)) return null; throw e; }),
   ]);
   debtsTableMissing.value = rd === null;
   const remote = {
@@ -282,12 +320,12 @@ export async function syncNow(state) {
     const seen = new Map(remoteList.map((r) => [r.id, r.updatedAt]));
     return list.filter((x) => !seen.has(x.id) || x.updatedAt > seen.get(x.id));
   };
-  await push('categories', newer(merged.categories, remote.categories).map(toCat));
-  await push('accounts', newer(merged.accounts, remote.accounts).map(toAcc));
-  await push('transactions', newer(merged.transactions, remote.transactions).map(toTx));
-  if (rd !== null) await push('debts', newer(merged.debts, remote.debts).map(toDebt));
+  await push('categories', newer(merged.categories, remote.categories).map(toCat), pid);
+  await push('accounts', newer(merged.accounts, remote.accounts).map(toAcc), pid);
+  await push('transactions', newer(merged.transactions, remote.transactions).map(toTx), pid);
+  if (rd !== null) await push('debts', newer(merged.debts, remote.debts).map(toDebt), pid);
   if (merged.settings.updatedAt > (remote.settings?.updatedAt ?? 0)) {
-    await push('settings', [{ currency: merged.settings.currency, theme: merged.settings.theme || 'neon', graph: merged.settings.graph || 'classic', balance_style: merged.settings.balance || 'cards', accounts_list: merged.settings.accountList || 'hide', nav_style: merged.settings.nav || 'default', intro_style: merged.settings.intro || 'off', display_name: merged.settings.name || '', avatar: merged.settings.avatar || '', updated_at: merged.settings.updatedAt }]);
+    await push('settings', [{ currency: merged.settings.currency, theme: merged.settings.theme || 'neon', graph: merged.settings.graph || 'classic', balance_style: merged.settings.balance || 'cards', accounts_list: merged.settings.accountList || 'hide', nav_style: merged.settings.nav || 'default', intro_style: merged.settings.intro || 'off', display_name: merged.settings.name || '', avatar: merged.settings.avatar || '', updated_at: merged.settings.updatedAt }], pid);
   }
   return merged;
 }

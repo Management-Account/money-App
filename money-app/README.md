@@ -175,3 +175,11 @@ The arrows (balance card, deck, month switcher) and the + button now use drawn i
 - New account is now a 3-step flow: pick the **type** (Bank, Mobile wallet, Card, Cash, Investment, Other), then the **country** and provider, then the details (name, starting balance, logo). Cash skips the provider step. Editing an account opens straight on the details, with Back to change the provider.
 - Added banks and wallets for 21 more countries: US, China, Germany, Japan, India, UK, France, Italy, Canada, Brazil, Russia, South Korea, Australia, Mexico, Spain, Indonesia, Netherlands, Türkiye, Saudi Arabia, Switzerland and the UAE, plus worldwide wallets (Revolut, Wise, PayPal...) and brokers/crypto. Egypt is unchanged. The country chip starts on your last choice, or your browser's region. "All countries" searches everything, and you can still type your own bank.
 - The lists are compiled from general knowledge of each country's best-known providers, not an official register. To add or fix one, edit `js/institutions-world.js`.
+
+## v39
+
+- **Family profiles** (Settings > Family): add a profile for each person. One login, but every profile keeps its own accounts, transactions, categories, debts, budgets, currency and look, fully separate. Switch from Settings (Open) or from the profile window (Switch profile, shown once there is more than one profile). Nothing was added to the sidebar.
+- **Optional PIN** per profile (4 to 6 digits, stored only as a salted hash). A locked profile asks for its PIN when the app opens and when you switch to it. It stops casual snooping on a shared phone; it is not strong protection.
+- Your existing data becomes the first profile and is untouched.
+- **Run `supabase/schema.sql` once more** (safe to re-run). It adds a `profiles` table and a `profile_id` column on every data table (existing rows become profile `main`). Until you run it, the first profile syncs as before and extra profiles stay on this device (the app says so in Settings).
+- Deleting a profile removes its data from this device and from your account. Signing out clears every profile from the device, after syncing them.
