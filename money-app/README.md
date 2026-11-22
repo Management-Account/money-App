@@ -152,3 +152,9 @@ Service worker is now cache-first (no network requests on launch) and the app re
 
 ## v34
 The arrows (balance card, deck, month switcher) and the + button now use drawn icons instead of typed characters, so they sit exactly in the middle of their circles.
+
+## v35
+
+- New profile window: tap the profile panel in the sidebar (or the avatar button on Home) to open a small window with your name, handle, Accounts and Transactions counts, last sync, and Edit profile, Themes, Settings and Sign out. Esc or a click outside closes it.
+- Sign Out and Themes were removed from the sidebar (Themes is also reachable from Settings when signed in).
+- Navigation text is now readable in every combination of the 10 themes and 8 navigation styles (desktop and phone): theme-aware ink on filled highlights, normal text colour on plain ones, and a light scrim under white ink on bright gradients. Muted text on Soft Light and Aurora Glass and the "In use" label were darkened to pass 4.5:1.

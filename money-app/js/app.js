@@ -202,7 +202,6 @@ const TABS = [
   ['wallets', 'Accounts', 'Accounts'],
   ['insights', 'Insights', 'Insights'],
   ['categories', 'Budgets', 'Budgets'],
-  ['themes', 'Themes', 'Themes'],
   ['settings', 'Settings', 'Settings'],
 ];
 
@@ -217,7 +216,6 @@ function avatarHTML(cls = '') {
 const userHandle = () => { const s = getSession(); return s ? `@${displayName(s.user.email)}` : 'This device'; };
 
 function renderNav() {
-  const signedIn = cloudEnabled && !!getSession();
   $('#nav').innerHTML =
     `<div class="brand"><span class="logo">${LOGO}</span><span>Pocket Ledger</span></div>` +
     TABS.map(
@@ -225,10 +223,55 @@ function renderNav() {
         `<button data-action="tab" data-tab="${id}" aria-label="${label}" ${ui.tab === id ? 'aria-current="page"' : ''}>` +
         `<span class="ico">${ICONS[id]}</span><span class="lbl">${label}</span><span class="lbl-s">${short}</span></button>`,
     ).join('') +
-    (signedIn ? `<button class="navout" data-action="signout" aria-label="Sign Out"><span class="ico">${ICONS.signout}</span><span class="lbl">Sign Out</span></button>` : '') +
-    `<div class="nav-foot"><button class="mini-profile" data-action="tab" data-tab="profile" aria-label="Your profile" ${ui.tab === 'profile' ? 'aria-current="page"' : ''}>` +
+    `<div class="nav-foot"><button class="mini-profile" data-action="pmenu" aria-label="Your profile menu" aria-haspopup="menu" ${ui.tab === 'profile' || ui.tab === 'themes' ? 'aria-current="page"' : ''}>` +
     `${avatarHTML('sm')}<span class="mp-text"><b>${esc(profName())}</b><small>${esc(userHandle())}</small></span></button></div>`;
 }
+
+// ---------- profile window (opened from the sidebar profile panel or the avatar button) ----------
+
+function closePMenu() {
+  const m = document.getElementById('pmenu');
+  if (!m) return;
+  m.remove();
+  document.querySelectorAll('[data-action="pmenu"][aria-expanded]').forEach((b) => b.setAttribute('aria-expanded', 'false'));
+}
+function openPMenu(trigger) {
+  closePMenu();
+  const signedIn = cloudEnabled && !!getSession();
+  const item = (a, ico, label, extra = '') => `<button role="menuitem" class="pm-item ${extra}" data-action="${a}"${a === 'tab' ? ` data-tab="${label.toLowerCase()}"` : ''}><span class="ico">${ICONS[ico]}</span><span>${label}</span></button>`;
+  const m = document.createElement('div');
+  m.id = 'pmenu';
+  m.className = 'pmenu';
+  m.setAttribute('role', 'menu');
+  m.setAttribute('aria-label', 'Profile');
+  m.innerHTML = `<div class="pm-head">${avatarHTML('lg')}<div class="pm-id"><b>${esc(profName())}</b><small>${esc(userHandle())}</small></div></div>
+    <div class="pm-stats"><div><b>${liveAccounts(state).length}</b><span>Accounts</span></div><div><b>${live(state.transactions).length}</b><span>Transactions</span></div></div>
+    <div class="pm-sync" aria-live="polite">${esc(syncText())}</div>
+    <div class="pm-list">${item('edit-profile', 'profile', 'Edit profile')}${item('tab', 'themes', 'Themes')}${item('tab', 'settings', 'Settings')}${signedIn ? item('signout', 'signout', 'Sign out', 'danger') : ''}</div>`;
+  document.body.appendChild(m);
+  trigger.setAttribute('aria-expanded', 'true');
+  const r = trigger.getBoundingClientRect(), w = m.offsetWidth, h = m.offsetHeight, vw = innerWidth, vh = innerHeight;
+  let left = Math.min(Math.max(8, r.left), vw - w - 8);
+  let top = r.top > vh / 2 ? r.top - h - 10 : r.bottom + 10;
+  if (r.left > vw / 2) left = Math.min(vw - w - 8, Math.max(8, r.right - w));
+  m.style.left = `${left}px`;
+  m.style.top = `${Math.min(Math.max(8, top), Math.max(8, vh - h - 8))}px`;
+  m.querySelector('.pm-item')?.focus();
+}
+document.addEventListener('pointerdown', (e) => {
+  if (!e.target.closest('#pmenu, [data-action="pmenu"]')) closePMenu();
+});
+document.addEventListener('keydown', (e) => {
+  const m = document.getElementById('pmenu');
+  if (!m) return;
+  if (e.key === 'Escape') { closePMenu(); document.querySelector('[data-action="pmenu"]')?.focus(); return; }
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    const it = [...m.querySelectorAll('.pm-item')], i = it.indexOf(document.activeElement);
+    it[(i + (e.key === 'ArrowDown' ? 1 : -1) + it.length) % it.length].focus();
+  }
+});
+window.addEventListener('resize', closePMenu);
 
 // ---------- navigation and opening animations ----------
 
@@ -315,7 +358,7 @@ function pageFx() {
   ui.lastTab = ui.tab;
   const kind = PAGE_FX[navStyle()];
   if (!kind || !prevTab || prevTab === ui.tab || reduceMotion()) return;
-  const order = [...TABS.map((t) => t[0]), 'profile'];
+  const order = [...TABS.map((t) => t[0]), 'themes', 'profile'];
   const main = $('#main');
   main.style.setProperty('--pd', order.indexOf(ui.tab) >= order.indexOf(prevTab) ? 1 : -1);
   if (kind === 'stagger') [...main.children].forEach((c, i) => c.style.setProperty('--pi', Math.min(i, 7)));
@@ -519,7 +562,7 @@ function topbarHTML(s) {
     <div class="greet"><h1>Dashboard</h1><p>Welcome back, ${esc(profName())} \u{1F44B}</p></div>
     <label class="search">${ICONS.search}<input id="topsearch" type="search" placeholder="Search transactions" aria-label="Search transactions" value="${esc(ui.q)}"></label>
     <button class="icon-pill" data-action="bell" aria-label="Notifications${n ? `, ${n} budget alert${n === 1 ? '' : 's'}` : ''}">${ICONS.bell}${n ? `<span class="badge">${n}</span>` : ''}</button>
-    <button class="avatar-btn" data-action="tab" data-tab="profile" aria-label="Your profile">${avatarHTML()}</button>
+    <button class="avatar-btn" data-action="pmenu" aria-label="Your profile menu" aria-haspopup="menu">${avatarHTML()}</button>
   </header>`;
 }
 
@@ -951,6 +994,7 @@ function accountCard() {
       <button class="btn" data-action="sync">Sync now</button>
       <button class="btn" data-action="change-password">Change password</button>
       <button class="btn" data-action="tab" data-tab="profile">Profile</button>
+      <button class="btn" data-action="tab" data-tab="themes">Themes</button>
     </div>
   </div>`;
 }
@@ -1808,6 +1852,11 @@ document.addEventListener('click', async (e) => {
   const el = e.target.closest('[data-action]');
   if (!el) return;
   const { action, id, tab } = el.dataset;
+  if (action === 'pmenu') {
+    if (document.getElementById('pmenu')) closePMenu(); else openPMenu(el);
+    return;
+  }
+  if (el.closest('#pmenu')) closePMenu();
   switch (action) {
     case 'open-acct': {
       const key = el.dataset.key;
