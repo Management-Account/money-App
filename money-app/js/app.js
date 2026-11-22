@@ -207,7 +207,6 @@ const TABS = [
   ['debts', 'Debts', 'Debts'],
   ['insights', 'Insights', 'Insights'],
   ['categories', 'Budgets', 'Budgets'],
-  ['settings', 'Settings', 'Settings'],
 ];
 
 function profName() {
@@ -228,7 +227,7 @@ function renderNav() {
         `<button data-action="tab" data-tab="${id}" aria-label="${label}" ${ui.tab === id ? 'aria-current="page"' : ''}>` +
         `<span class="ico">${ICONS[id]}</span><span class="lbl">${label}</span><span class="lbl-s">${short}</span></button>`,
     ).join('') +
-    `<div class="nav-foot"><button class="mini-profile" data-action="pmenu" aria-label="Your profile menu" aria-haspopup="menu" ${ui.tab === 'profile' || ui.tab === 'themes' ? 'aria-current="page"' : ''}>` +
+    `<div class="nav-foot"><button class="mini-profile" data-action="pmenu" aria-label="Your profile menu" aria-haspopup="menu" ${['profile', 'themes', 'settings'].includes(ui.tab) ? 'aria-current="page"' : ''}>` +
     `${avatarHTML('sm')}<span class="mp-text"><b>${esc(profName())}</b><small>${esc(userHandle())}</small></span></button></div>`;
 }
 
@@ -363,7 +362,7 @@ function pageFx() {
   ui.lastTab = ui.tab;
   const kind = PAGE_FX[navStyle()];
   if (!kind || !prevTab || prevTab === ui.tab || reduceMotion()) return;
-  const order = [...TABS.map((t) => t[0]), 'themes', 'profile'];
+  const order = [...TABS.map((t) => t[0]), 'themes', 'settings', 'profile'];
   const main = $('#main');
   main.style.setProperty('--pd', order.indexOf(ui.tab) >= order.indexOf(prevTab) ? 1 : -1);
   if (kind === 'stagger') [...main.children].forEach((c, i) => c.style.setProperty('--pi', Math.min(i, 7)));

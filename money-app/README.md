@@ -165,3 +165,7 @@ The arrows (balance card, deck, month switcher) and the + button now use drawn i
 - Each debt has a switch, "Count this debt towards my net worth". When on, money owed to you adds to net worth and money you owe subtracts from it (Insights > Net worth, including the over-time chart).
 - A payment can name an account. That account's balance then goes down (you paid) or up (you were repaid). It is not counted as income or spending.
 - **Run `supabase/schema.sql` once more** in the Supabase SQL Editor (it is safe to re-run) so debts sync between devices. Until you do, everything else syncs as before and the app says debts are not syncing yet.
+
+## v37
+
+- Settings moved out of the sidebar and bottom bar. Open it from the profile window (sidebar profile panel, or the avatar button on Home).
