@@ -1106,3 +1106,27 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 :root .btn.primary, :root .fab, :root .logo, :root .debt-av, :root .avatar { background-image: linear-gradient(var(--scrim), var(--scrim)), var(--grad); }
 :root .avatar { color: var(--on-grad); }
 :root[data-theme="crystal"] { --expense: #ff9a9a; }
+
+/* ---- new account wizard ---- */
+.wz-steps { display: flex; gap: 6px; margin: 4px 0 16px; }
+.wz-steps i { flex: 1; height: 4px; border-radius: 9px; background: rgb(var(--ov) / .14); }
+.wz-steps i.on { background: var(--grad); }
+.types { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.type-tile { display: flex; align-items: center; gap: 12px; padding: 13px; border-radius: 16px; border: 1px solid var(--line-strong); background: rgb(var(--ov) / .05); color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.type-tile .e { flex: none; display: grid; place-items: center; width: 40px; height: 40px; border-radius: 12px; background: rgb(var(--ov) / .1); font-size: 1.4rem; }
+.type-tile b { display: block; font-size: .96rem; }
+.type-tile small { color: var(--muted); font-size: .76rem; }
+.type-tile:hover { border-color: var(--accent); }
+.type-tile[aria-pressed="true"] { background-image: linear-gradient(var(--scrim), var(--scrim)), var(--grad); border-color: transparent; color: var(--on-grad); }
+.type-tile[aria-pressed="true"] small { color: inherit; opacity: .85; }
+#ctry { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 8px; margin-bottom: 8px; scrollbar-width: thin; }
+#ctry .chip { flex: none; padding: 8px 13px; border-radius: 99px; border: 1px solid var(--line-strong); background: none; color: var(--text); font: inherit; font-size: .88rem; cursor: pointer; white-space: nowrap; }
+#ctry .chip[aria-pressed="true"] { background-image: linear-gradient(var(--scrim), var(--scrim)), var(--grad); border-color: transparent; color: var(--on-grad); }
+.wz-pill { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.wz-pill .pill { display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px 5px 6px; border-radius: 99px; background: rgb(var(--ov) / .08); font-size: .85rem; }
+.wz-pill .pill:first-child { padding-left: 12px; }
+@media (max-width: 420px) { .types { grid-template-columns: 1fr; } }
+/* the provider list sits inside the dialog (not floating over it) so it is never clipped */
+[data-step="2"] .combo { margin-bottom: 0; }
+[data-step="2"] .combo > label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+[data-step="2"] .combo-list { position: static; margin-top: 8px; max-height: min(46vh, 360px); box-shadow: none; }

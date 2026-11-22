@@ -169,3 +169,9 @@ The arrows (balance card, deck, month switcher) and the + button now use drawn i
 ## v37
 
 - Settings moved out of the sidebar and bottom bar. Open it from the profile window (sidebar profile panel, or the avatar button on Home).
+
+## v38
+
+- New account is now a 3-step flow: pick the **type** (Bank, Mobile wallet, Card, Cash, Investment, Other), then the **country** and provider, then the details (name, starting balance, logo). Cash skips the provider step. Editing an account opens straight on the details, with Back to change the provider.
+- Added banks and wallets for 21 more countries: US, China, Germany, Japan, India, UK, France, Italy, Canada, Brazil, Russia, South Korea, Australia, Mexico, Spain, Indonesia, Netherlands, Türkiye, Saudi Arabia, Switzerland and the UAE, plus worldwide wallets (Revolut, Wise, PayPal...) and brokers/crypto. Egypt is unchanged. The country chip starts on your last choice, or your browser's region. "All countries" searches everything, and you can still type your own bank.
+- The lists are compiled from general knowledge of each country's best-known providers, not an official register. To add or fix one, edit `js/institutions-world.js`.

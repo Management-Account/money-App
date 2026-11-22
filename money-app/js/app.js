@@ -2,7 +2,7 @@ import { pickerHTML, mountPicker } from './picker.js';
 import { EMOJI_GROUPS, categoryEmoji, suggestEmoji, validEmoji } from './emoji.js';
 import { categoryColor, nextColor, validColor, PALETTE } from './colors.js';
 import { THEMES, DEFAULT_THEME, isTheme, themeMeta, GRAPH_STYLES, DEFAULT_GRAPH, isGraph, BALANCE_STYLES, DEFAULT_BALANCE, isBalance, ACCOUNT_LIST_OPTIONS, DEFAULT_ACCOUNT_LIST, isAccountList, NAV_STYLES, DEFAULT_NAV, isNavStyle, INTRO_STYLES, DEFAULT_INTRO, isIntroStyle } from './themes.js';
-import { institutionOf, badgeHTML } from './institutions.js';
+import { institutionOf, badgeHTML, COUNTRIES } from './institutions.js';
 import {
   SCHEMA_VERSION, uid, todayStr, monthKey, shiftMonth, toMinor, fromMinor, formatMoney, createState, live, upsert, remove,
   mergeState, sanitizeState, summarize, toCSV, importCSV, isValidDate, monthsEnding, addDays, daysBetween, unitFor, rangeSeries, balanceBeforeDate, categoryTotalsRange, validLogo,
@@ -1546,7 +1546,7 @@ function openDialog(html, { onSubmit, onDelete, onOpen, confirmText } = {}) {
     e.preventDefault();
     const err = await onSubmit(new FormData(form));
     if (err) form.querySelector('.error').textContent = err;
-    else dlg.close();
+    else if (err !== false) dlg.close(); // false = stay open (a wizard moving to its next step)
   });
   form.querySelector('[data-close]').addEventListener('click', () => dlg.close());
   const del = form.querySelector('[data-delete]');
@@ -1800,15 +1800,44 @@ function cropLogo(file, host) {
   });
 }
 
+const ACCOUNT_TYPES = [
+  ['bank', '🏦', 'Bank account', 'Current, savings'],
+  ['wallet', '📱', 'Mobile wallet', 'Vodafone Cash, PayPal'],
+  ['card', '💳', 'Card', 'Credit, prepaid'],
+  ['cash', '💵', 'Cash', 'Cash on hand'],
+  ['invest', '📈', 'Investment', 'Broker, crypto, gold'],
+  ['other', '✨', 'Other', 'Anything else'],
+];
+
+// The country chip to start on: the last one used, else the browser's region, else Egypt.
+function defaultCountry() {
+  try {
+    const saved = localStorage.getItem('pl.country');
+    if (COUNTRIES.some((c) => c[0] === saved)) return saved;
+  } catch { /* optional */ }
+  const region = (navigator.language || '').split('-')[1]?.toUpperCase();
+  return COUNTRIES.some((c) => c[0] === region) ? region : 'EG';
+}
+
 function openWalletDialog(id) {
   const existing = id ? live(state.accounts).find((a) => a.id === id) : null;
   const acc = existing || { id: uid(), name: '', opening: 0, institution: '', logo: '' };
   const count = existing ? accountSummaries(state).accounts.find((a) => a.id === id)?.count || 0 : 0;
   const canDelete = existing && liveAccounts(state).length > 1;
+  let wzStep = existing ? 3 : 1;
+  let wzNext = () => {};
   openDialog(
     `<form>
-      <h3>${existing ? 'Edit account' : 'New account'}</h3>
-      ${pickerHTML('inst', acc.institution)}
+      <h3 id="wz-title">${existing ? 'Edit account' : 'New account'}</h3>
+      <p class="hint" id="wz-sub" style="margin-top:0"></p>
+      <div class="wz-steps" aria-hidden="true"><i></i><i></i><i></i></div>
+      <section data-step="1"><div class="types">${ACCOUNT_TYPES.map(([v, e, n, d]) => `<button type="button" class="type-tile" data-type="${v}" aria-pressed="false"><span class="e">${e}</span><span><b>${n}</b><small>${d}</small></span></button>`).join('')}</div></section>
+      <section data-step="2" hidden>
+        <div class="chips" id="ctry" role="group" aria-label="Country"></div>
+        ${pickerHTML('inst', acc.institution, 'Provider', 'Search, or type your own')}
+      </section>
+      <section data-step="3" hidden>
+      <div class="wz-pill" id="wz-pill"></div>
       <div class="field logo-field"><span class="lbl">Logo</span>
         <div class="logo-row"><span id="logo-prev"></span>
           <button type="button" class="btn" id="logo-pick">Upload image</button>
@@ -1824,12 +1853,15 @@ function openWalletDialog(id) {
         <input type="text" id="w-open" name="opening" inputmode="decimal" autocomplete="off" placeholder="0.00" value="${existing ? esc(fromMinor(acc.opening)) : ''}">
         <span class="hint">What was in this account before the transactions you record here. Balance = starting balance + income - expenses. Use a minus sign for debt, like -200.</span></div>
       ${existing && !canDelete ? '<p class="hint">This is your only account, so it cannot be deleted.</p>' : ''}
+      </section>
       <div class="error" role="alert"></div>
       <div class="actions">
         ${canDelete ? '<button type="button" class="btn danger" data-delete>Delete</button>' : ''}
         <span class="spacer"></span>
         <button type="button" class="btn" data-close>Cancel</button>
-        <button class="btn primary">Save</button>
+        <button type="button" class="btn" id="wz-back" hidden>Back</button>
+        <button type="button" class="btn primary" id="wz-next">Next</button>
+        <button class="btn primary" id="wz-save" hidden>Save</button>
       </div>
     </form>`,
     {
@@ -1837,6 +1869,14 @@ function openWalletDialog(id) {
         ? `Delete the account "${acc.name}" and its ${count} transaction${count === 1 ? '' : 's'}? This cannot be undone.`
         : `Delete the account "${acc.name}"?`,
       onOpen(form) {
+        // Wizard: 1 type, 2 country and provider, 3 details. Cash skips step 2.
+        const inst0 = institutionOf(acc.institution);
+        let step = existing ? 3 : 1;
+        let type = inst0 ? (['bank', 'wallet', 'card', 'cash', 'invest', 'other'].includes(inst0.kind) ? inst0.kind : 'bank') : 'bank';
+        let country = inst0 && inst0.country && inst0.country !== '*' ? inst0.country : defaultCountry();
+        const hasCountries = () => ['bank', 'wallet', 'card'].includes(type);
+        const pickOpts = { accept: (i) => i.kind === type && (!hasCountries() || i.country === country || i.country === '*') };
+        const TITLES = { bank: 'Choose your bank', wallet: 'Choose your wallet or payment app', card: 'Choose your card', invest: 'Choose your broker or platform', other: 'Name this account' };
         const nameEl = form.querySelector('#w-name');
         // Fill the name from the chosen institution unless the user typed their own name.
         let auto = !existing || !acc.name || acc.name === institutionOf(acc.institution)?.name;
@@ -1854,7 +1894,7 @@ function openWalletDialog(id) {
           if (auto && label) nameEl.value = label;
           else if (auto && !value) nameEl.value = '';
           showLogo();
-        });
+        }, pickOpts);
         showLogo();
         const fileEl = form.querySelector('#logo-file');
         form.querySelector('#logo-pick').addEventListener('click', () => fileEl.click());
@@ -1874,9 +1914,61 @@ function openWalletDialog(id) {
           showLogo();
         });
         // New account: open the list right away. Editing: keep it closed so the form is usable.
-        if (!existing) { form.querySelector('#inst-input').focus(); picker.show(); } else document.activeElement?.blur?.();
+        const secs = [...form.querySelectorAll('[data-step]')];
+        const steps = [...form.querySelectorAll('.wz-steps i')];
+        const chips = form.querySelector('#ctry');
+        const drawChips = () => {
+          chips.hidden = !hasCountries();
+          chips.innerHTML = [...COUNTRIES.map((c) => [c[0], `${c[2]} ${c[1]}`]), ['*', '🌍 Worldwide'], ['', '🔎 All countries']]
+            .map(([c, label]) => `<button type="button" class="chip" data-c="${c}" aria-pressed="${c === country}">${esc(label)}</button>`).join('');
+          chips.querySelector('[aria-pressed="true"]')?.scrollIntoView({ inline: 'center', block: 'nearest' });
+        };
+        const go = (n) => {
+          step = n;
+          wzStep = n;
+          form.querySelector('.error').textContent = '';
+          secs.forEach((s2) => { s2.hidden = Number(s2.dataset.step) !== n; });
+          steps.forEach((el2, i) => el2.classList.toggle('on', i < n));
+          const tname = ACCOUNT_TYPES.find((t) => t[0] === type)?.[2] || '';
+          form.querySelector('#wz-sub').textContent = n === 1 ? 'Pick the type first. It decides which providers you can choose from.' : n === 2 ? `${tname}${hasCountries() ? '. Pick a country, then the provider.' : ''}` : '';
+          form.querySelector('#wz-title').textContent = n === 1 ? 'What kind of account?' : n === 2 ? TITLES[type] : existing ? 'Edit account' : 'Account details';
+          form.querySelector('#wz-back').hidden = n === 1;
+          form.querySelector('#wz-next').hidden = n === 3;
+          form.querySelector('#wz-save').hidden = n !== 3;
+          if (n === 2) { picker.setLabel(TITLES[type]); drawChips(); picker.show(); }
+          if (n === 3) {
+            picker.hide();
+            const cur = institutionOf(picker.value);
+            form.querySelector('#wz-pill').innerHTML = `<span class="pill">${esc(ACCOUNT_TYPES.find((t) => t[0] === type)?.[1] || '')} ${esc(tname)}</span>${cur ? `<span class="pill">${badgeHTML(cur, 'sm')} ${esc(cur.name)}</span>` : ''}`;
+            nameEl.focus();
+          }
+        };
+        const next = () => {
+          if (step === 1) {
+            if (type === 'cash') { picker.setValue('cash'); go(3); } else go(2);
+          } else if (step === 2) go(3);
+        };
+        wzNext = next;
+        const back = () => go(step === 3 ? (type === 'cash' ? 1 : 2) : 1);
+        form.querySelector('#wz-next').addEventListener('click', next);
+        form.querySelector('#wz-back').addEventListener('click', back);
+        const tiles = [...form.querySelectorAll('.type-tile')];
+        const markTiles = () => tiles.forEach((t) => t.setAttribute('aria-pressed', String(t.dataset.type === type)));
+        tiles.forEach((t) => t.addEventListener('click', () => { type = t.dataset.type; markTiles(); next(); }));
+        markTiles();
+        chips.addEventListener('click', (e) => {
+          const b = e.target.closest('.chip');
+          if (!b) return;
+          country = b.dataset.c;
+          try { if (country && country !== '*') localStorage.setItem('pl.country', country); } catch { /* optional */ }
+          drawChips();
+          picker.show();
+        });
+        go(step);
+        if (existing) document.activeElement?.blur?.();
       },
       onSubmit(fd) {
+        if (wzStep < 3) { wzNext(); return false; } // Enter on an earlier step moves on instead of saving
         const name = (fd.get('name') || '').trim();
         if (!name) return 'Give the account a name.';
         if (liveAccounts(state).some((a) => a.id !== acc.id && a.name.toLowerCase() === name.toLowerCase())) return 'You already have an account with that name. Add something to tell them apart, like "CIB Savings".';

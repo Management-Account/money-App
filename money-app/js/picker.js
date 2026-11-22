@@ -3,14 +3,14 @@ import { GROUPS, INSTITUTIONS, searchInstitutions, institutionOf, customValue, n
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
-export function pickerHTML(id, value) {
+export function pickerHTML(id, value, label = 'Bank or institution', placeholder = 'Search banks, wallets, cards or type your own') {
   const inst = institutionOf(value);
   return `<div class="combo" id="${id}">
-    <label for="${id}-input">Bank or institution</label>
+    <label for="${id}-input">${esc(label)}</label>
     <div class="combo-box">
       <span class="combo-badge">${badgeHTML(inst)}</span>
       <input type="text" id="${id}-input" role="combobox" aria-expanded="false" aria-controls="${id}-list" aria-autocomplete="list"
-        autocomplete="off" spellcheck="false" placeholder="Search banks, wallets, cards or type your own" value="${esc(inst ? inst.name : '')}">
+        autocomplete="off" spellcheck="false" placeholder="${esc(placeholder)}" value="${esc(inst ? inst.name : '')}">
       <button type="button" class="combo-clear" aria-label="Clear selection" ${inst ? '' : 'hidden'}>×</button>
     </div>
     <ul class="combo-list" id="${id}-list" role="listbox" hidden></ul>
@@ -19,7 +19,9 @@ export function pickerHTML(id, value) {
 }
 
 // onChange(value, displayName) is called whenever the selection changes.
-export function mountPicker(root, onChange = () => {}) {
+// opts.accept(institution) limits which providers are listed (for example only banks of one country).
+export function mountPicker(root, onChange = () => {}, opts = {}) {
+  const accept = opts.accept || (() => true);
   const input = root.querySelector('input[role="combobox"]');
   const list = root.querySelector('.combo-list');
   const hidden = root.querySelector('input[name="institution"]');
@@ -46,7 +48,8 @@ export function mountPicker(root, onChange = () => {}) {
   function render() {
     const text = input.value.trim();
     const q = norm(text);
-    const found = searchInstitutions(text);
+    let found = searchInstitutions(text).filter(accept);
+    if (!text) found = [...found.filter((i) => i.country !== '*'), ...found.filter((i) => i.country === '*')]; // the country's own first
     let html = '';
     let n = 0;
     const vals = [];
@@ -156,5 +159,5 @@ export function mountPicker(root, onChange = () => {}) {
     hide();
   });
 
-  return { show, setValue, get value() { return hidden.value; } };
+  return { show, hide, refresh: () => open && render(), setLabel: (t) => { root.querySelector('label').textContent = t; }, setValue, get value() { return hidden.value; } };
 }

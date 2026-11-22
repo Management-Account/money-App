@@ -331,7 +331,7 @@ import { INSTITUTIONS, searchInstitutions, institutionOf, customValue, initials 
 test('institution catalog: unique ids, names and Arabic names present, all groups filled', () => {
   const ids = INSTITUTIONS.map((i) => i.id);
   assert.equal(new Set(ids).size, ids.length);
-  assert.ok(INSTITUTIONS.every((i) => i.name && i.ar && i.short));
+  assert.ok(INSTITUTIONS.every((i) => i.name && i.short && (i.country !== 'EG' || i.ar)));
   for (const k of ['bank', 'wallet', 'card', 'other']) assert.ok(INSTITUTIONS.some((i) => i.kind === k));
   assert.ok(INSTITUTIONS.filter((i) => i.kind === 'bank').length >= 35);
 });
@@ -594,4 +594,15 @@ test('debts sanitize, merge and survive a backup round trip', () => {
   assert.equal(m.debts.length, 2);
   assert.equal(m.debts.find((d) => d.id === D2).person, 'Sara K');
   assert.equal(mergeState({ ...s, debts: undefined }, other).debts.length, 1); // old saved state without debts
+});
+
+import { providersFor, COUNTRIES } from '../js/institutions.js';
+test('every country has banks, and worldwide providers appear under each country', () => {
+  assert.ok(COUNTRIES.length >= 21);
+  for (const [cc] of COUNTRIES) assert.ok(providersFor('bank', cc).length >= 5, `${cc} banks`);
+  assert.ok(providersFor('wallet', 'JP').some((i) => i.name === 'PayPal'));
+  assert.ok(providersFor('wallet', 'JP').some((i) => i.name === 'PayPay'));
+  assert.ok(!providersFor('bank', 'JP').some((i) => i.country === 'EG'));
+  assert.ok(providersFor('invest', '').length >= 5);
+  assert.equal(institutionOf('misr').name, 'Banque Misr'); // existing Egyptian ids are unchanged
 });

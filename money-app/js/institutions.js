@@ -4,10 +4,15 @@
 // entry just edit this file (id must stay unique and never change once users have picked it).
 // Custom institutions typed by a user are stored as "~Name" and are never in this list.
 
+import { COUNTRIES, WORLD, GLOBAL } from './institutions-world.js';
+export { COUNTRIES };
+
 export const GROUPS = [
   ['bank', '🏦 Banks'],
   ['wallet', '📱 Mobile wallets & payment apps'],
   ['card', '💳 Cards'],
+  ['invest', '📈 Investments'],
+  ['cash', '💵 Cash'],
   ['other', '💰 Other'],
 ];
 
@@ -101,12 +106,36 @@ const O = [
   ['gold', 'Gold & investments', 'ذهب واستثمارات', 'GD', 'gold'],
 ];
 
+// Providers that exist everywhere (shown under every country, or under "Worldwide").
+const EVERYWHERE = new Set(['applepay', 'googlepay', 'samsungpay', 'paypal', 'visa', 'mastercard', 'amexcard', 'unionpay', 'prepaid']);
+const OTHER_KIND = { cash: 'cash', savings: 'other', gold: 'invest' };
+const COUNTRY_NAME = Object.fromEntries(COUNTRIES.map((c) => [c[0], c[1]]));
+
+const slug = (name) => String(name).toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+function fromWorld(cc, kind, entry) {
+  const [name, short, words] = entry.split('|');
+  return { id: `${cc.toLowerCase()}-${slug(name)}`, name, ar: '', short: short || initials(name), words: words || '', kind, country: cc };
+}
+const globalWorld = Object.entries(GLOBAL).flatMap(([kind, list]) => list.map((e) => ({ ...fromWorld('XX', kind, e), id: `xx-${slug(e.split('|')[0])}`, country: '*' })));
+const countryWorld = Object.entries(WORLD).flatMap(([cc, kinds]) => Object.entries(kinds).flatMap(([kind, list]) => list.map((e) => fromWorld(cc, kind, e))));
+
 export const INSTITUTIONS = [
-  ...B.map((r) => ({ id: r[0], name: r[1], ar: r[2], short: r[3], words: r[4], kind: 'bank' })),
-  ...W.map((r) => ({ id: r[0], name: r[1], ar: r[2], short: r[3], words: r[4], kind: 'wallet' })),
-  ...C.map((r) => ({ id: r[0], name: r[1], ar: r[2], short: r[3], words: r[4], kind: 'card' })),
-  ...O.map((r) => ({ id: r[0], name: r[1], ar: r[2], short: r[3], words: r[4], kind: 'other' })),
-];
+  ...B.map((r) => ({ id: r[0], name: r[1], ar: r[2], short: r[3], words: r[4], kind: 'bank', country: 'EG' })),
+  ...countryWorld.filter((i) => i.kind === 'bank'),
+  ...W.map((r) => ({ id: r[0], name: r[1], ar: r[2], short: r[3], words: r[4], kind: 'wallet', country: EVERYWHERE.has(r[0]) ? '*' : 'EG' })),
+  ...countryWorld.filter((i) => i.kind === 'wallet'),
+  ...globalWorld.filter((i) => i.kind === 'wallet'),
+  ...C.map((r) => ({ id: r[0], name: r[1], ar: r[2], short: r[3], words: r[4], kind: 'card', country: EVERYWHERE.has(r[0]) ? '*' : 'EG' })),
+  ...countryWorld.filter((i) => i.kind === 'card'),
+  ...O.map((r) => ({ id: r[0], name: r[1], ar: r[2], short: r[3], words: r[4], kind: OTHER_KIND[r[0]] || 'other', country: '*' })),
+  ...globalWorld.filter((i) => i.kind === 'invest'),
+].map((i) => ({ ...i, countryName: i.country === '*' ? 'worldwide' : COUNTRY_NAME[i.country] || '' }));
+
+// Providers of one kind for a country: that country's own first, then the worldwide ones. country '' = every country.
+export function providersFor(kind, country) {
+  const list = INSTITUTIONS.filter((i) => i.kind === kind && (!country || i.country === country || i.country === '*'));
+  return country ? [...list.filter((i) => i.country !== '*'), ...list.filter((i) => i.country === '*')] : list;
+}
 
 const BY_ID = new Map(INSTITUTIONS.map((i) => [i.id, i]));
 
@@ -145,7 +174,7 @@ export function norm(s) {
     .trim();
 }
 
-const HAY = new Map(INSTITUTIONS.map((i) => [i.id, norm(`${i.name} ${i.ar} ${i.short} ${i.words}`)]));
+const HAY = new Map(INSTITUTIONS.map((i) => [i.id, norm(`${i.name} ${i.ar} ${i.short} ${i.words} ${i.countryName}`)]));
 
 // All institutions matching every word typed, best matches (name starts with the query) first.
 export function searchInstitutions(query) {
