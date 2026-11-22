@@ -7,11 +7,12 @@ import {
   SCHEMA_VERSION, uid, todayStr, monthKey, shiftMonth, toMinor, fromMinor, formatMoney, createState, live, upsert, remove,
   mergeState, sanitizeState, summarize, toCSV, importCSV, isValidDate, monthsEnding, addDays, daysBetween, unitFor, rangeSeries, balanceBeforeDate, categoryTotalsRange, validLogo,
   toMinorSigned, liveAccounts, fallbackAccountId, accountIdOf, accountSummaries, removeAccount, FEE_CAT, FEE_NAME, isTransferTx, transferLegs, netWorthSeries,
+  debtPaid, debtRemaining, debtSettled, debtTotals,
 } from './store.js';
 import { getCurrencies } from './currencies.js';
 import { columnChart, lineChart, rankedBars, ringGauge, donutChart, attachTips, hideTip } from './charts.js';
 import {
-  cloudEnabled, AuthError, NetworkError, getSession, getOwner, setOwner, signUp, signIn, signOut, setPassword, syncNow,
+  cloudEnabled, AuthError, NetworkError, getSession, getOwner, setOwner, signUp, signIn, signOut, setPassword, syncNow, debtsTableMissing,
   USERNAME_RE, normalizeUsername, displayName,
 } from './sync.js';
 
@@ -31,6 +32,7 @@ function load() {
       if (s && s.version === SCHEMA_VERSION) {
         s.settings = { currency: 'EGP', updatedAt: 0, ...s.settings };
         if (!Array.isArray(s.accounts)) s.accounts = createState().accounts; // saved before accounts existed
+        if (!Array.isArray(s.debts)) s.debts = []; // saved before debts existed
         return s;
       }
     }
@@ -113,6 +115,7 @@ function syncText() {
   if (inflight) return 'Syncing…';
   if (syncInfo.error === 'offline') return 'Offline. Your changes will sync when you reconnect.';
   if (syncInfo.error) return `Sync problem: ${syncInfo.error}`;
+  if (debtsTableMissing.value) return 'Synced, but debts are not syncing yet: run the updated supabase/schema.sql once (see README).';
   if (syncInfo.lastAt) return `Synced at ${new Date(syncInfo.lastAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
   return '';
 }
@@ -190,6 +193,7 @@ const ICONS = {
   bell: svg('<path d="M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15z"/><path d="M10 21h4"/>'),
   search: svg('<circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/>'),
   signout: svg('<path d="M9 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h4"/><path d="M16 8l4 4-4 4M20 12H9"/>'),
+  debts: svg('<path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6"/>'),
   settings: svg('<path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/>'),
 };
 
@@ -200,6 +204,7 @@ const TABS = [
   ['home', 'Home', 'Home'],
   ['transactions', 'Transactions', 'Activity'],
   ['wallets', 'Accounts', 'Accounts'],
+  ['debts', 'Debts', 'Debts'],
   ['insights', 'Insights', 'Insights'],
   ['categories', 'Budgets', 'Budgets'],
   ['settings', 'Settings', 'Settings'],
@@ -945,6 +950,151 @@ function viewWallets() {
     <p class="hint">An account's balance is its starting balance, plus everything recorded in it as income, minus everything recorded as an expense. Choose the account whenever you add a transaction. A transfer moves money between two accounts (its fee, if any, comes out of the account you choose).</p>`;
 }
 
+// ---------- debts: money I owe and money owed to me ----------
+
+const debtPct = (d) => Math.min(100, Math.floor((debtPaid(d) / d.total) * 100));
+const debtDue = (d) => {
+  if (!d.due || debtSettled(d)) return '';
+  const over = d.due < todayStr();
+  return `<span class="debt-due ${over ? 'over' : ''}">${over ? 'Overdue \u00b7 ' : 'Due '}${esc(fmtDay(d.due, { day: 'numeric', month: 'short', year: 'numeric' }))}</span>`;
+};
+
+function debtCard(d) {
+  const owe = d.kind === 'owe';
+  const done = debtSettled(d);
+  const pct = debtPct(d);
+  const pays = (d.payments || []).slice().sort((a, b) => b.date.localeCompare(a.date));
+  const accName = (id) => live(state.accounts).find((a) => a.id === id)?.name || '';
+  return `<article class="card debt ${done ? 'done' : ''}" aria-label="${esc(d.person)}">
+    <div class="debt-top">
+      <span class="debt-av" aria-hidden="true">${esc((d.person[0] || '?').toUpperCase())}</span>
+      <div class="debt-who"><b>${esc(d.person)}</b>${d.note ? `<small>${esc(d.note)}</small>` : ''}${debtDue(d)}</div>
+      <div class="debt-left ${done ? '' : owe ? 'expense' : 'income'}">${done ? '<span class="debt-paid">Paid in full</span>' : `${esc(money(debtRemaining(d)))}<small>${owe ? 'left to pay' : 'left to collect'}</small>`}</div>
+    </div>
+    <div class="bar debt-bar" style="--c:${owe ? 'var(--expense)' : 'var(--income)'}" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}" aria-label="${esc(d.person)}: ${pct}% ${owe ? 'paid' : 'received'}"><span style="width:${pct}%"></span></div>
+    <div class="debt-nums"><span>${owe ? 'Paid' : 'Received'} ${esc(money(debtPaid(d)))} of ${esc(money(d.total))}</span><span>${pct}%</span></div>
+    ${d.inNetWorth ? '' : '<div class="hint debt-nw">Not counted in net worth</div>'}
+    <div class="btns debt-btns">
+      ${done ? '' : `<button class="btn primary" data-action="pay-debt" data-id="${esc(d.id)}">${owe ? 'Add payment' : 'Add repayment'}</button><button class="btn" data-action="pay-debt" data-id="${esc(d.id)}" data-full="1">${owe ? 'Pay in full' : 'Received in full'}</button>`}
+      <button class="btn" data-action="edit-debt" data-id="${esc(d.id)}">Edit</button>
+    </div>
+    ${pays.length ? `<details class="debt-hist"><summary>${pays.length} payment${pays.length === 1 ? '' : 's'}</summary><ul>${pays
+      .map((p) => `<li><span>${esc(fmtDay(p.date, { day: 'numeric', month: 'short', year: 'numeric' }))}${p.accountId && accName(p.accountId) ? ` \u00b7 ${esc(accName(p.accountId))}` : ''}${p.note ? ` \u00b7 ${esc(p.note)}` : ''}</span><b>${esc(money(p.amount))}</b><button class="mini-x" data-action="del-payment" data-id="${esc(d.id)}" data-pid="${esc(p.id)}" aria-label="Delete this payment">\u00d7</button></li>`)
+      .join('')}</ul></details>` : ''}
+  </article>`;
+}
+
+function viewDebts() {
+  const all = live(state.debts || []).sort((a, b) => Number(debtSettled(a)) - Number(debtSettled(b)) || (a.due || '9999').localeCompare(b.due || '9999') || a.person.localeCompare(b.person));
+  const t = debtTotals(state);
+  const tile = (label, value, sub, cls) => `<div class="card tile"><div class="label">${label}</div><div class="value ${cls}">${esc(value)}</div><div class="sub">${esc(sub)}</div></div>`;
+  const section = (kind, title, empty) => {
+    const list = all.filter((d) => d.kind === kind);
+    return `<h2 class="sect">${title}</h2>${list.length ? `<div class="debts">${list.map(debtCard).join('')}</div>` : `<div class="card empty">${empty}</div>`}`;
+  };
+  return `<h1>Debts</h1>
+    <div class="tiles two">
+      ${tile('You owe', money(t.owe), `${t.oweCount} open debt${t.oweCount === 1 ? '' : 's'}`, t.owe ? 'expense' : '')}
+      ${tile('Owed to you', money(t.owed), `${t.owedCount} open debt${t.owedCount === 1 ? '' : 's'}`, t.owed ? 'income' : '')}
+    </div>
+    <div class="btns" style="margin:14px 0">
+      <button class="btn primary" data-action="add-debt" data-kind="owe">I owe someone</button>
+      <button class="btn" data-action="add-debt" data-kind="owed">Someone owes me</button>
+    </div>
+    ${section('owe', 'Money I owe', 'You do not owe anyone. Tap "I owe someone" to track a debt.')}
+    ${section('owed', 'Money owed to me', 'Nobody owes you. Tap "Someone owes me" to track money you lent.')}
+    <p class="hint">Each debt has a progress bar. Add part of the amount whenever you pay or get paid, or pay it in full. Pick an account on a payment and that account's balance moves too. In each debt's settings you choose whether it counts towards your net worth.</p>`;
+}
+
+function openDebtDialog(id, kind0 = 'owe') {
+  const ex = id ? live(state.debts || []).find((d) => d.id === id) : null;
+  const d = ex || { id: uid(), kind: kind0, person: '', total: 0, date: todayStr(), due: '', note: '', inNetWorth: true, payments: [] };
+  const paid = debtPaid(d);
+  openDialog(
+    `<form>
+      <h3>${ex ? 'Edit debt' : 'New debt'}</h3>
+      <div class="field"><div class="seg" role="radiogroup" aria-label="Kind">
+        <label><input type="radio" name="kind" value="owe" ${d.kind === 'owe' ? 'checked' : ''}>I owe</label>
+        <label><input type="radio" name="kind" value="owed" ${d.kind === 'owed' ? 'checked' : ''}>Owed to me</label></div></div>
+      <div class="field"><label for="d-person">Who (person or company)</label>
+        <input type="text" id="d-person" name="person" maxlength="60" autocomplete="off" value="${esc(d.person)}"></div>
+      <div class="field"><label for="d-total">Total amount</label>
+        <input type="text" id="d-total" name="total" inputmode="decimal" autocomplete="off" placeholder="0.00" value="${ex ? esc(fromMinor(d.total)) : ''}">
+        ${paid ? `<span class="hint">Already ${esc(money(paid))} paid. The total cannot go below that.</span>` : ''}</div>
+      <div class="field"><label for="d-date">Date</label><input type="date" id="d-date" name="date" value="${esc(d.date)}"></div>
+      <div class="field"><label for="d-due">Due date (optional)</label><input type="date" id="d-due" name="due" value="${esc(d.due)}"></div>
+      <div class="field"><label for="d-note">Note (optional)</label><input type="text" id="d-note" name="note" maxlength="200" autocomplete="off" value="${esc(d.note)}"></div>
+      <label class="check"><input type="checkbox" name="nw" ${d.inNetWorth ? 'checked' : ''}><span>Count this debt towards my net worth<small>When on, money owed to you adds to net worth and money you owe subtracts from it.</small></span></label>
+      <div class="error" role="alert"></div>
+      <div class="actions">
+        ${ex ? '<button type="button" class="btn danger" data-delete>Delete</button>' : ''}
+        <span class="spacer"></span>
+        <button type="button" class="btn" data-close>Cancel</button>
+        <button class="btn primary">Save</button>
+      </div>
+    </form>`,
+    {
+      confirmText: `Delete the debt with "${d.person}" and its payment history? Money already moved in accounts by its payments will move back.`,
+      onSubmit(fd) {
+        const person = (fd.get('person') || '').trim();
+        if (!person) return 'Enter who this debt is with.';
+        const total = toMinor(fd.get('total') || '');
+        if (!Number.isFinite(total) || total <= 0) return 'Enter the total amount, like 1500 or 249.50.';
+        if (total < paid) return `The total cannot be less than the ${money(paid)} already paid.`;
+        const date = fd.get('date');
+        if (!isValidDate(date)) return 'Pick a valid date.';
+        const due = fd.get('due') || '';
+        if (due && !isValidDate(due)) return 'Pick a valid due date.';
+        setState({ ...state, debts: upsert(state.debts || [], { ...d, kind: fd.get('kind') === 'owed' ? 'owed' : 'owe', person, total, date, due, note: (fd.get('note') || '').trim(), inNetWorth: fd.get('nw') === 'on' }) });
+        toast('Debt saved');
+      },
+      onDelete() {
+        setState({ ...state, debts: remove(state.debts || [], d.id) });
+        toast('Debt deleted');
+      },
+    },
+  );
+}
+
+function openPaymentDialog(id, full) {
+  const d = live(state.debts || []).find((x) => x.id === id);
+  if (!d) return;
+  const left = debtRemaining(d);
+  const owe = d.kind === 'owe';
+  openDialog(
+    `<form>
+      <h3>${owe ? 'Pay' : 'Receive from'} ${esc(d.person)}</h3>
+      <p class="hint" style="margin-top:0">${esc(money(left))} ${owe ? 'left to pay' : 'left to collect'} of ${esc(money(d.total))}.</p>
+      <div class="field"><label for="p-amt">${owe ? 'Amount you are paying' : 'Amount you received'}</label>
+        <input type="text" id="p-amt" name="amount" inputmode="decimal" autocomplete="off" placeholder="0.00" value="${full ? esc(fromMinor(left)) : ''}">
+        <div class="btns" style="margin-top:8px"><button type="button" class="btn" id="p-full">${owe ? 'Pay the full' : 'Receive the full'} ${esc(money(left))}</button></div></div>
+      <div class="field"><label for="p-date">Date</label><input type="date" id="p-date" name="date" value="${esc(todayStr())}"></div>
+      <div class="field"><label for="p-acc">Account</label>
+        <select id="p-acc" name="account"><option value="">Do not change any account</option>${walletOptions('')}</select>
+        <span class="hint">${owe ? 'Choose where the money comes from and that account goes down.' : 'Choose where the money was paid into and that account goes up.'} This is not counted as income or spending.</span></div>
+      <div class="field"><label for="p-note">Note (optional)</label><input type="text" id="p-note" name="note" maxlength="120" autocomplete="off"></div>
+      <div class="error" role="alert"></div>
+      <div class="actions"><span class="spacer"></span><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Save payment</button></div>
+    </form>`,
+    {
+      onOpen(form) {
+        form.querySelector('#p-full').addEventListener('click', () => { form.querySelector('#p-amt').value = fromMinor(left); });
+        if (!full) form.querySelector('#p-amt').focus();
+      },
+      onSubmit(fd) {
+        const amount = toMinor(fd.get('amount') || '');
+        if (!Number.isFinite(amount) || amount <= 0) return 'Enter an amount, like 200 or 49.50.';
+        if (amount > left) return `That is more than the ${money(left)} still ${owe ? 'to pay' : 'to collect'}.`;
+        const date = fd.get('date');
+        if (!isValidDate(date)) return 'Pick a valid date.';
+        const payment = { id: uid(), date, amount, accountId: fd.get('account') || '', note: (fd.get('note') || '').trim() };
+        setState({ ...state, debts: upsert(state.debts || [], { ...d, payments: [...(d.payments || []), payment] }) });
+        toast(amount === left ? 'Paid in full' : 'Payment saved');
+      },
+    },
+  );
+}
+
 function viewTransactions() {
   const accs = liveAccounts(state);
   if (ui.acct && !accs.some((a) => a.id === ui.acct)) ui.acct = '';
@@ -1107,7 +1257,8 @@ function netWorthData(d) {
   const w = accountSummaries(state);
   const assets = w.accounts.reduce((t, a) => t + Math.max(0, a.balance), 0);
   const owed = w.accounts.reduce((t, a) => t + Math.max(0, -a.balance), 0);
-  return { start, values, now: w.total, change: (values.length ? values[values.length - 1] : start) - start, assets, owed, accounts: w.accounts.slice().sort((a, b) => b.balance - a.balance) };
+  const dt = debtTotals(state);
+  return { start, values, now: w.total + dt.netWorth, counted: dt.counted, change: (values.length ? values[values.length - 1] : start) - start, assets, owed, accounts: w.accounts.slice().sort((a, b) => b.balance - a.balance) };
 }
 
 function netWorthHTML(d) {
@@ -1129,12 +1280,12 @@ function netWorthHTML(d) {
     .join('');
   return `<h2 class="sect" style="margin-top:18px">Net worth</h2>
     <div class="tiles two">
-      ${tile('Net worth', moneyTile(nw.now), `Across ${nw.accounts.length} account${nw.accounts.length === 1 ? '' : 's'}`, nw.now < 0 ? 'expense' : '')}
+      ${tile('Net worth', moneyTile(nw.now), `Across ${nw.accounts.length} account${nw.accounts.length === 1 ? '' : 's'}${nw.counted ? ` and ${nw.counted} debt${nw.counted === 1 ? '' : 's'}` : ''}`, nw.now < 0 ? 'expense' : '')}
       ${tile('Change', `${sign}${moneyTile(Math.abs(nw.change))}`, d.per.name, nw.change < 0 ? 'expense' : nw.change > 0 ? 'income' : '')}
     </div>
     ${d.rows.length > 1 ? `<section class="card chart-card gs-${g}">
       <h2>Net worth over time</h2>
-      <p class="hint" style="margin:-4px 0 6px">The total of all your accounts at the end of each ${d.unit}, starting balances included.</p>
+      <p class="hint" style="margin:-4px 0 6px">The total of all your accounts, plus money owed to you and minus money you owe (for debts set to count), at the end of each ${d.unit}.</p>
       <div class="chart" id="ch-networth"></div>
       ${tableView([colHead, 'Net worth'], d.rows.map((r, i) => [d.labels[i].title, money(nw.values[i])]))}
     </section>` : ''}
@@ -1370,7 +1521,7 @@ function render() {
   }
   renderNav();
   mountNavFx();
-  const views = { home: viewHome, transactions: viewTransactions, wallets: viewWallets, insights: viewInsights, categories: viewCategories, themes: viewThemes, settings: viewSettings, profile: viewProfile };
+  const views = { home: viewHome, transactions: viewTransactions, wallets: viewWallets, debts: viewDebts, insights: viewInsights, categories: viewCategories, themes: viewThemes, settings: viewSettings, profile: viewProfile };
   $('#main').innerHTML = views[ui.tab]();
   $('#main').classList.toggle('wide', ui.tab === 'home');
   drawHome();
@@ -1981,6 +2132,23 @@ document.addEventListener('click', async (e) => {
       ui.txLimit += 50;
       $('#txlist').innerHTML = txListBlock();
       break;
+    case 'add-debt':
+      openDebtDialog('', el.dataset.kind === 'owed' ? 'owed' : 'owe');
+      break;
+    case 'edit-debt':
+      openDebtDialog(id);
+      break;
+    case 'pay-debt':
+      openPaymentDialog(id, !!el.dataset.full);
+      break;
+    case 'del-payment': {
+      const d = live(state.debts || []).find((x) => x.id === id);
+      if (d && confirm('Delete this payment? Any account it changed will change back.')) {
+        setState({ ...state, debts: upsert(state.debts, { ...d, payments: d.payments.filter((p) => p.id !== el.dataset.pid) }) });
+        toast('Payment deleted');
+      }
+      break;
+    }
     case 'add-wallet':
       openWalletDialog();
       break;

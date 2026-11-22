@@ -88,10 +88,10 @@
 :root[data-theme="aurora"] {
   color-scheme: light;
   --bg: #cfc8f5; --surface: #ece9fb; --glass: rgba(255, 255, 255, .42); --glass-strong: rgba(255, 255, 255, .8);
-  --text: #1e1b4b; --muted: #46437a;
+  --text: #1e1b4b; --muted: #38356a;
   --line: rgba(255, 255, 255, .65); --line-strong: rgba(255, 255, 255, .9);
   --accent: #5b4bdb; --grad: linear-gradient(135deg, #7a6cf5 0%, #4f5bd9 100%); --glow: 0 8px 24px rgba(91, 75, 219, .42);
-  --income: #0f7a3a; --expense: #c0262d; --warn: #9a5a07;
+  --income: #0a5f2c; --expense: #a31b22; --warn: #9a5a07;
   --s1: #2563eb; --s2: #c2410c;
   --ov: 60 50 130; --gc: 91 75 219; --ac: 91 75 219; --sh: 80 60 160;
   --input-bg: rgba(255, 255, 255, .55); --pop: #f6f4ff; --ico: #5b4bdb; --sb: #b3aae6; --meta: #bdb4f1;
@@ -107,7 +107,7 @@
 }
 :root[data-theme="crystal"] {
   --bg: #060b1f; --surface: #121b3d; --glass: rgba(40, 60, 130, .32); --glass-strong: rgba(10, 17, 46, .9);
-  --text: #eaf1ff; --muted: #93a6d6;
+  --text: #eaf1ff; --muted: #aebde6;
   --line: rgba(170, 200, 255, .18); --line-strong: rgba(190, 215, 255, .34);
   --accent: #4d8dff; --grad: linear-gradient(135deg, #2f7bff 0%, #4f46e5 100%); --glow: 0 0 26px rgba(47, 123, 255, .5);
   --gc: 47 123 255; --ac: 77 141 255;
@@ -1069,3 +1069,40 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   :root body[data-nav="default"] .nav button[aria-current="page"] .ico { color: var(--on-grad); }
   :root body[data-nav="expand"] .nav > button[aria-current="page"] { color: var(--on-grad); }
 }
+
+/* ---- debts ---- */
+.debts { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); }
+.debt { display: block; padding: 16px; }
+.debt.done .debt-who b { color: var(--muted); }
+.debt-top { display: flex; align-items: flex-start; gap: 12px; }
+.debt-av { flex: none; display: grid; place-items: center; width: 42px; height: 42px; border-radius: 50%; background: var(--grad); color: var(--on-grad); font-weight: 700; }
+.debt-who { display: grid; gap: 2px; min-width: 0; flex: 1; }
+.debt-who b { overflow-wrap: anywhere; }
+.debt-who small, .debt-nums, .debt-left small { color: var(--muted); font-size: .8rem; }
+.debt-due { font-size: .78rem; color: var(--muted); }
+.debt-due.over { color: var(--expense); font-weight: 600; }
+.debt-left { text-align: right; font-weight: 650; display: grid; justify-items: end; flex: none; }
+.debt-left.expense { color: var(--expense); }
+.debt-left.income { color: var(--income); }
+.debt-paid { color: var(--income); font-size: .85rem; }
+.debt-bar { margin: 14px 0 6px; height: 11px; }
+.debt-nums { display: flex; justify-content: space-between; gap: 8px; }
+.debt-nw { margin-top: 6px; }
+.debt-btns { margin-top: 12px; flex-wrap: wrap; }
+.debt-hist { margin-top: 10px; font-size: .88rem; }
+.debt-hist summary { cursor: pointer; color: var(--muted); }
+.debt-hist ul { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
+.debt-hist li { display: flex; align-items: center; gap: 8px; }
+.debt-hist li span { flex: 1; color: var(--muted); min-width: 0; overflow-wrap: anywhere; }
+.mini-x { width: 28px; height: 28px; border-radius: 50%; border: 1px solid var(--line-strong); background: none; color: var(--text); font-size: 1.1rem; line-height: 1; padding: 0; cursor: pointer; }
+.mini-x:hover { color: var(--expense); border-color: var(--expense); }
+.check { display: flex; gap: 12px; align-items: flex-start; margin: 14px 0 4px; cursor: pointer; }
+.check input { width: 22px; height: 22px; margin-top: 2px; flex: none; accent-color: var(--accent); }
+.check span { display: grid; gap: 2px; }
+.check small { color: var(--muted); font-size: .8rem; }
+/* selected segment keeps readable ink on every theme */
+:root .seg label:has(input:checked) { color: var(--on-grad); background-image: linear-gradient(var(--scrim), var(--scrim)), var(--grad); }
+.debt-btns .btn { padding: 10px 14px; }
+:root .btn.primary, :root .fab, :root .logo, :root .debt-av, :root .avatar { background-image: linear-gradient(var(--scrim), var(--scrim)), var(--grad); }
+:root .avatar { color: var(--on-grad); }
+:root[data-theme="crystal"] { --expense: #ff9a9a; }

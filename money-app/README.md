@@ -158,3 +158,10 @@ The arrows (balance card, deck, month switcher) and the + button now use drawn i
 - New profile window: tap the profile panel in the sidebar (or the avatar button on Home) to open a small window with your name, handle, Accounts and Transactions counts, last sync, and Edit profile, Themes, Settings and Sign out. Esc or a click outside closes it.
 - Sign Out and Themes were removed from the sidebar (Themes is also reachable from Settings when signed in).
 - Navigation text is now readable in every combination of the 10 themes and 8 navigation styles (desktop and phone): theme-aware ink on filled highlights, normal text colour on plain ones, and a light scrim under white ink on bright gradients. Muted text on Soft Light and Aurora Glass and the "In use" label were darkened to pass 4.5:1.
+
+## v36
+
+- New **Debts** tab: track money you owe and money owed to you. Each debt has a progress bar, a due date (optional), a payment history, and buttons to add part of the amount or pay/receive it in full.
+- Each debt has a switch, "Count this debt towards my net worth". When on, money owed to you adds to net worth and money you owe subtracts from it (Insights > Net worth, including the over-time chart).
+- A payment can name an account. That account's balance then goes down (you paid) or up (you were repaid). It is not counted as income or spending.
+- **Run `supabase/schema.sql` once more** in the Supabase SQL Editor (it is safe to re-run) so debts sync between devices. Until you do, everything else syncs as before and the app says debts are not syncing yet.

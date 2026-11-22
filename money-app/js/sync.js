@@ -237,6 +237,18 @@ const toTx = (t) => ({
   updated_at: t.updatedAt || 0, deleted: !!t.deleted,
 });
 
+const fromDebt = (r) => ({
+  id: r.id, kind: r.kind, person: r.person, total: Number(r.total) || 0, date: r.date || '', due: r.due || '', note: r.note || '', inNetWorth: r.in_networth !== false,
+  payments: Array.isArray(r.payments) ? r.payments : [], updatedAt: Number(r.updated_at) || 0, ...(r.deleted ? { deleted: true } : {}),
+});
+const toDebt = (d) => ({
+  id: d.id, kind: d.kind, person: d.person, total: d.total, date: d.date || '', due: d.due || '', note: d.note || '', in_networth: d.inNetWorth !== false,
+  payments: d.payments || [], updated_at: d.updatedAt || 0, deleted: !!d.deleted,
+});
+// Older projects may not have the debts table yet: sync everything else and report it instead of failing.
+export const debtsTableMissing = { value: false };
+const isMissingTable = (e) => e && (e.status === 404 || /debts/.test(e.message || '')) && !(e instanceof NetworkError);
+
 async function push(table, rows) {
   // Rows are keyed per user (user_id, id): built-in categories share ids between users.
   const target = table === 'settings' ? table : `${table}?on_conflict=user_id,id`;
@@ -252,11 +264,16 @@ async function push(table, rows) {
 // Pull the account's data, merge it with local data (newest edit per record wins), push back
 // whatever is newer locally, and return the merged state.
 export async function syncNow(state) {
-  const [rc, ra, rt, rs] = await Promise.all([fetchAll('categories'), fetchAll('accounts'), fetchAll('transactions'), rest('settings?select=*')]);
+  const [rc, ra, rt, rs, rd] = await Promise.all([
+    fetchAll('categories'), fetchAll('accounts'), fetchAll('transactions'), rest('settings?select=*'),
+    fetchAll('debts').catch((e) => { if (isMissingTable(e)) return null; throw e; }),
+  ]);
+  debtsTableMissing.value = rd === null;
   const remote = {
     categories: rc.map(fromCat),
     accounts: ra.map(fromAcc),
     transactions: rt.map(fromTx),
+    debts: (rd || []).map(fromDebt),
     settings: rs[0] ? { currency: rs[0].currency, theme: rs[0].theme || undefined, graph: rs[0].graph || undefined, balance: rs[0].balance_style || undefined, accountList: rs[0].accounts_list || undefined, nav: rs[0].nav_style || undefined, intro: rs[0].intro_style || undefined, name: rs[0].display_name ?? undefined, avatar: rs[0].avatar ?? undefined, updatedAt: Number(rs[0].updated_at) || 0 } : undefined,
   };
   const merged = mergeState(state, remote);
@@ -268,6 +285,7 @@ export async function syncNow(state) {
   await push('categories', newer(merged.categories, remote.categories).map(toCat));
   await push('accounts', newer(merged.accounts, remote.accounts).map(toAcc));
   await push('transactions', newer(merged.transactions, remote.transactions).map(toTx));
+  if (rd !== null) await push('debts', newer(merged.debts, remote.debts).map(toDebt));
   if (merged.settings.updatedAt > (remote.settings?.updatedAt ?? 0)) {
     await push('settings', [{ currency: merged.settings.currency, theme: merged.settings.theme || 'neon', graph: merged.settings.graph || 'classic', balance_style: merged.settings.balance || 'cards', accounts_list: merged.settings.accountList || 'hide', nav_style: merged.settings.nav || 'default', intro_style: merged.settings.intro || 'off', display_name: merged.settings.name || '', avatar: merged.settings.avatar || '', updated_at: merged.settings.updatedAt }]);
   }

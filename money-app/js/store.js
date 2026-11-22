@@ -124,6 +124,7 @@ export function createState() {
     accounts: [{ id: DEFAULT_ACCOUNT_ID, name: 'Cash', opening: 0, updatedAt: 0 }],
     categories: DEFAULT_CATEGORIES.map(([id, name, type]) => ({ id, name, type, budget: 0, updatedAt: 0 })),
     transactions: [],
+    debts: [],
   };
 }
 
@@ -165,6 +166,7 @@ export function mergeState(local, remote) {
     categories: mergeCollections(local.categories, remote.categories),
     accounts: mergeCollections(local.accounts || [], remote.accounts || []),
     transactions: mergeCollections(local.transactions, remote.transactions),
+    debts: mergeCollections(local.debts || [], remote.debts || []),
   };
 }
 
@@ -237,6 +239,7 @@ export function sanitizeState(obj) {
       updatedAt: Number.isFinite(a.updatedAt) ? a.updatedAt : 0,
       ...(a.deleted ? { deleted: true } : {}),
     }));
+  const debts = (Array.isArray(obj.debts) ? obj.debts : []).map(cleanDebt).filter(Boolean);
   const cur = typeof obj.settings?.currency === 'string' ? obj.settings.currency.toUpperCase() : '';
   const currency = /^[A-Z]{3}$/.test(cur) ? cur : 'EGP';
   const updatedAt = Number.isFinite(obj.settings?.updatedAt) ? obj.settings.updatedAt : 0;
@@ -248,7 +251,66 @@ export function sanitizeState(obj) {
   const theme = isTheme(obj.settings?.theme) ? obj.settings.theme : DEFAULT_THEME;
   const name = typeof obj.settings?.name === 'string' ? obj.settings.name.trim().slice(0, 40) : '';
   const avatar = validLogo(obj.settings?.avatar);
-  return { version: SCHEMA_VERSION, settings: { currency, theme, graph, balance, accountList, nav, intro, name, avatar, updatedAt }, categories, accounts, transactions };
+  return { version: SCHEMA_VERSION, settings: { currency, theme, graph, balance, accountList, nav, intro, name, avatar, updatedAt }, categories, accounts, transactions, debts };
+}
+
+// ---------- debts ----------
+// kind 'owe' = money I owe someone, 'owed' = money someone owes me. Payments live inside the debt record
+// (one synced row per debt). A payment may name an account: that account's balance then moves too.
+
+export const debtPaid = (d) => (d.payments || []).reduce((t, p) => t + p.amount, 0);
+export const debtRemaining = (d) => Math.max(0, d.total - debtPaid(d));
+export const debtSettled = (d) => debtRemaining(d) === 0;
+
+export function cleanDebt(d) {
+  if (!d || typeof d.id !== 'string' || !UUID_RE.test(d.id)) return null;
+  if (d.kind !== 'owe' && d.kind !== 'owed') return null;
+  if (!Number.isSafeInteger(d.total) || d.total <= 0) return null;
+  const person = typeof d.person === 'string' ? d.person.trim().slice(0, 60) : '';
+  if (!person) return null;
+  const payments = (Array.isArray(d.payments) ? d.payments : [])
+    .filter((p) => p && Number.isSafeInteger(p.amount) && p.amount > 0 && isValidDate(p.date))
+    .map((p) => ({
+      id: typeof p.id === 'string' && p.id ? p.id.slice(0, 40) : uid(),
+      date: p.date,
+      amount: p.amount,
+      accountId: typeof p.accountId === 'string' && UUID_RE.test(p.accountId) ? p.accountId : '',
+      note: typeof p.note === 'string' ? p.note.slice(0, 120) : '',
+    }));
+  return {
+    id: d.id,
+    kind: d.kind,
+    person,
+    total: d.total,
+    date: isValidDate(d.date) ? d.date : todayStr(),
+    due: isValidDate(d.due) ? d.due : '',
+    note: typeof d.note === 'string' ? d.note.slice(0, 200) : '',
+    inNetWorth: d.inNetWorth !== false,
+    payments,
+    updatedAt: Number.isFinite(d.updatedAt) ? d.updatedAt : 0,
+    ...(d.deleted ? { deleted: true } : {}),
+  };
+}
+
+// Outstanding amounts: what I owe, what I am owed, and the part of each that counts towards net worth.
+export function debtTotals(state) {
+  const out = { owe: 0, owed: 0, oweCount: 0, owedCount: 0, netWorth: 0, counted: 0 };
+  for (const d of live(state.debts || [])) {
+    const r = debtRemaining(d);
+    if (d.kind === 'owe') { out.owe += r; if (r) out.oweCount++; } else { out.owed += r; if (r) out.owedCount++; }
+    if (d.inNetWorth) { out.netWorth += d.kind === 'owed' ? r : -r; if (r) out.counted++; }
+  }
+  return out;
+}
+
+// Money a debt payment moved in or out of an account: paying what I owe takes money out, being repaid puts it in.
+export function debtAccountEvents(state) {
+  const ids = new Set(liveAccounts(state).map((a) => a.id));
+  const ev = [];
+  for (const d of live(state.debts || [])) {
+    for (const p of d.payments || []) if (p.accountId && ids.has(p.accountId)) ev.push([p.date, p.accountId, d.kind === 'owed' ? p.amount : -p.amount]);
+  }
+  return ev;
 }
 
 // ---------- transfers ----------
@@ -354,12 +416,13 @@ export function accountSummaries(state) {
       else x.expense -= d;
     }
   }
+  for (const [, id, d] of debtAccountEvents(state)) { const x = rows.get(id); if (x) x.debt = (x.debt || 0) + d; }
   const accounts = [...rows.values()];
-  for (const r of accounts) r.balance = r.opening + r.income - r.expense;
+  for (const r of accounts) r.balance = r.opening + r.income - r.expense + (r.debt || 0);
   return { accounts, total: accounts.reduce((sum, r) => sum + r.balance, 0) };
 }
 
-// Net worth = everything in every account. Series values are the total at the end of each day / month bucket.
+// Net worth = everything in every account, plus money owed to me minus money I owe (for debts marked to count). Series values are the total at the end of each day / month bucket.
 export function netWorthSeries(state, from, to, unit = unitFor(from, to)) {
   const opening = liveAccounts(state).reduce((sum, a) => sum + (a.opening || 0), 0);
   const events = [];
@@ -367,6 +430,13 @@ export function netWorthSeries(state, from, to, unit = unitFor(from, to)) {
     let d = 0;
     for (const [, delta] of accountDeltas(state, t)) d += delta;
     if (d) events.push([t.date, d]);
+  }
+  for (const [date, , delta] of debtAccountEvents(state)) events.push([date, delta]);
+  for (const d of live(state.debts || [])) {
+    if (!d.inNetWorth) continue;
+    const sign = d.kind === 'owed' ? 1 : -1;
+    events.push([d.date, sign * d.total]);
+    for (const p of d.payments || []) events.push([p.date, -sign * p.amount]);
   }
   events.sort((a, b) => a[0].localeCompare(b[0]));
   let i = 0;

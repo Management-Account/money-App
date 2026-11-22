@@ -536,3 +536,62 @@ test('nav and opening animation settings are kept, and bad values fall back', ()
   assert.equal(bad.settings.nav, 'default');
   assert.equal(bad.settings.intro, 'off');
 });
+
+// ---------- debts ----------
+import { debtPaid, debtRemaining, debtSettled, debtTotals, cleanDebt, netWorthSeries } from '../js/store.js';
+const D1 = '33333333-3333-4333-8333-333333333333';
+const D2 = '44444444-4444-4444-8444-444444444444';
+const debtState = () => {
+  let s = createState();
+  s = { ...s, accounts: upsert(s.accounts, { id: DEFAULT_ACCOUNT_ID, name: 'Cash', opening: 100000 }) };
+  s = { ...s, debts: upsert(s.debts, { id: D1, kind: 'owe', person: 'Ali', total: 50000, date: '2026-11-01', due: '', note: '', inNetWorth: true, payments: [{ id: 'p1', date: '2026-11-05', amount: 20000, accountId: DEFAULT_ACCOUNT_ID, note: '' }] }) };
+  s = { ...s, debts: upsert(s.debts, { id: D2, kind: 'owed', person: 'Sara', total: 30000, date: '2026-11-02', due: '', note: '', inNetWorth: false, payments: [] }) };
+  return s;
+};
+
+test('debt progress: paid, remaining and settled', () => {
+  const d = debtState().debts[0];
+  assert.equal(debtPaid(d), 20000);
+  assert.equal(debtRemaining(d), 30000);
+  assert.equal(debtSettled(d), false);
+  assert.equal(debtSettled({ ...d, payments: [...d.payments, { id: 'p2', date: '2026-11-06', amount: 30000 }] }), true);
+});
+
+test('debt totals and the net worth opt-in', () => {
+  const t = debtTotals(debtState());
+  assert.equal(t.owe, 30000);
+  assert.equal(t.owed, 30000);
+  assert.equal(t.netWorth, -30000); // only Ali counts; Sara is excluded
+  assert.equal(t.counted, 1);
+});
+
+test('a payment with an account moves that balance, and net worth stays consistent', () => {
+  const s = debtState();
+  assert.equal(accountSummaries(s).total, 80000); // 100000 - 20000 paid from Cash
+  const { values } = netWorthSeries(s, '2026-11-01', '2026-11-06', 'day');
+  assert.equal(values[0], 100000 - 50000); // owing 50000 counted on day 1
+  assert.equal(values[4], 80000 - 30000); // after paying 20000 from Cash: accounts 80000, still owe 30000
+  assert.equal(values[5], 50000);
+});
+
+test('uncounted debts do not change net worth, but account payments still do', () => {
+  let s = debtState();
+  s = { ...s, debts: s.debts.map((d) => (d.id === D1 ? { ...d, inNetWorth: false } : d)) };
+  const { values } = netWorthSeries(s, '2026-11-01', '2026-11-06', 'day');
+  assert.equal(values[0], 100000);
+  assert.equal(values[5], 80000);
+});
+
+test('debts sanitize, merge and survive a backup round trip', () => {
+  const s = debtState();
+  const back = sanitizeState(JSON.parse(JSON.stringify(s)));
+  assert.equal(back.debts.length, 2);
+  assert.equal(back.debts[0].payments.length, 1);
+  assert.equal(cleanDebt({ id: 'bad', kind: 'owe', person: 'x', total: 5 }), null);
+  assert.equal(cleanDebt({ id: D1, kind: 'owe', person: 'x', total: -5 }), null);
+  const other = { ...createState(), debts: [{ ...s.debts[1], person: 'Sara K', updatedAt: s.debts[1].updatedAt + 10 }] };
+  const m = mergeState(s, other);
+  assert.equal(m.debts.length, 2);
+  assert.equal(m.debts.find((d) => d.id === D2).person, 'Sara K');
+  assert.equal(mergeState({ ...s, debts: undefined }, other).debts.length, 1); // old saved state without debts
+});
