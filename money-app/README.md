@@ -183,3 +183,7 @@ The arrows (balance card, deck, month switcher) and the + button now use drawn i
 - Your existing data becomes the first profile and is untouched.
 - **Run `supabase/schema.sql` once more** (safe to re-run). It adds a `profiles` table and a `profile_id` column on every data table (existing rows become profile `main`). Until you run it, the first profile syncs as before and extra profiles stay on this device (the app says so in Settings).
 - Deleting a profile removes its data from this device and from your account. Signing out clears every profile from the device, after syncing them.
+
+## v40
+
+- Each profile's photo now shows in Settings > Family, the Switch profile window and the PIN screen (a coloured initial when there is no photo).

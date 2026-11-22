@@ -256,6 +256,19 @@ function inkFor(hex) {
   const L = 0.2126 * r + 0.7152 * g + 0.0722 * b;
   return 1.05 / (L + 0.05) >= (L + 0.05) / 0.05 ? '#fff' : '#111';
 }
+// A profile's photo lives in its own data; read it from there (the open profile's is already in memory).
+function profAvatar(p) {
+  try {
+    if (p.id === family.active) return state.settings.avatar || '';
+    return JSON.parse(localStorage.getItem(profileKey(p.id)) || '{}').settings?.avatar || '';
+  } catch {
+    return '';
+  }
+}
+const famAv = (p, cls = '') => {
+  const a = validLogo(profAvatar(p));
+  return `<span class="fam-av ${cls}" style="--pc:${esc(p.color)};--pi:${inkFor(p.color)}" aria-hidden="true">${a ? `<img src="${esc(a)}" alt="">` : esc(famInitial(p))}</span>`;
+};
 const famInitial = (p) => (famName(p)[0] || '?').toUpperCase();
 ui.lockFor = needsPin(family.active) ? family.active : ''; // a locked profile asks for its PIN when the app opens
 
@@ -310,7 +323,7 @@ function viewLock() {
   return `<div class="auth">
     <div class="auth-brand"><span class="logo">${LOGO}</span><span>Pocket Ledger</span></div>
     <form class="card" id="lockform" novalidate>
-      <div class="fam-av big" style="--pc:${esc(p.color)};--pi:${inkFor(p.color)}" aria-hidden="true">${esc(famInitial(p))}</div>
+      ${famAv(p, 'big')}
       <h1 style="font-size:1.25rem;text-align:center">${esc(famName(p))}</h1>
       <p class="hint" style="text-align:center">Enter this profile's PIN.</p>
       <div class="field"><label for="l-pin">PIN</label>
@@ -347,7 +360,7 @@ function familyCard() {
   return `<div class="card">
     <p class="hint" style="margin-top:0">Give each person in the family their own profile. Every profile keeps its own accounts, transactions, categories, debts and look, completely separate from the others. A PIN is optional.</p>
     <div class="fam-list">${ps
-      .map((p) => `<div class="fam-row"><span class="fam-av" style="--pc:${esc(p.color)};--pi:${inkFor(p.color)}" aria-hidden="true">${esc(famInitial(p))}</span>
+      .map((p) => `<div class="fam-row">${famAv(p)}
         <div class="fam-who"><b>${esc(famName(p))}</b><small>${p.id === family.active ? 'Open now' : 'Separate data'}${p.pin ? ' · PIN set' : ''}</small></div>
         ${p.id === family.active ? '' : `<button class="btn" data-action="switch-profile-to" data-id="${esc(p.id)}">Open</button>`}
         <button class="btn" data-action="edit-family" data-id="${esc(p.id)}">Edit</button></div>`)
@@ -362,7 +375,7 @@ function openSwitchDialog() {
     `<form><h3>Switch profile</h3>
       <div class="fam-list">${liveProfiles(family)
         .map((p) => `<button type="button" class="fam-row pick" data-action="switch-profile-to" data-id="${esc(p.id)}" ${p.id === family.active ? 'aria-current="true"' : ''}>
-          <span class="fam-av" style="--pc:${esc(p.color)};--pi:${inkFor(p.color)}" aria-hidden="true">${esc(famInitial(p))}</span>
+          ${famAv(p)}
           <span class="fam-who"><b>${esc(famName(p))}</b><small>${p.id === family.active ? 'Open now' : p.pin ? 'Locked with a PIN' : 'Separate data'}</small></span></button>`)
         .join('')}</div>
       <div class="error" role="alert"></div>
