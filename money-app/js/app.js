@@ -795,11 +795,11 @@ function budgetAlerts(s) {
 }
 
 function topbarHTML(s) {
-  const n = budgetAlerts(s).length;
+  const n = budgetAlerts(s).length + dueItems(state).length;
   return `<header class="topbar">
     <div class="greet"><h1>Dashboard</h1><p>Welcome back, ${esc(profName())} \u{1F44B}</p></div>
     <label class="search">${ICONS.search}<input id="topsearch" type="search" placeholder="Search transactions" aria-label="Search transactions" value="${esc(ui.q)}"></label>
-    <button class="icon-pill" data-action="bell" aria-label="Notifications${n ? `, ${n} budget alert${n === 1 ? '' : 's'}` : ''}">${ICONS.bell}${n ? `<span class="badge">${n}</span>` : ''}</button>
+    <button class="icon-pill" data-action="bell" aria-label="Notifications${n ? `, ${n} alert${n === 1 ? '' : 's'}` : ''}">${ICONS.bell}${n ? `<span class="badge">${n}</span>` : ''}</button>
     <button class="avatar-btn" data-action="pmenu" aria-label="Your profile menu" aria-haspopup="menu">${avatarHTML()}</button>
   </header>`;
 }
@@ -1112,8 +1112,16 @@ function viewProfile() {
 
 function openBellDialog() {
   const list = budgetAlerts(summarize(state, monthKey(todayStr())));
+  const bills = dueItems(state);
+  const billLi = (i) => {
+    const r = i.rec, auto = r.mode === 'auto', inc = r.kind === 'income';
+    const when = i.days < 0 ? `was due ${-i.days} day${i.days === -1 ? '' : 's'} ago` : i.days === 0 ? 'is due today' : i.days === 1 ? 'is due tomorrow' : `is due in ${i.days} days`;
+    return `<li class="${i.status === 'overdue' ? 'over' : 'near'}"><strong>${esc(r.title)}</strong><br>Reminder: ${esc(r.title)} (${esc(money(r.amount))}) ${when}${auto ? `. It will be ${inc ? 'deposited into' : 'taken from'} ${esc(accNameOf(r.accountId) || 'your account')} automatically.` : '.'}</li>`;
+  };
   openDialog(`<form><h3>Notifications</h3>
-    ${list.length ? `<ul class="alert-list">${list.map((a) => `<li class="${a.over ? 'over' : 'near'}"><strong>${esc(a.name)}</strong><br>${a.over ? 'Over budget' : 'Close to budget'}: ${esc(a.text)}</li>`).join('')}</ul>` : '<p class="hint">You are within every budget this month. Nothing needs your attention.</p>'}
+    ${bills.length ? `<ul class="alert-list">${bills.map(billLi).join('')}</ul>` : ''}
+    ${list.length ? `<ul class="alert-list">${list.map((a) => `<li class="${a.over ? 'over' : 'near'}"><strong>${esc(a.name)}</strong><br>${a.over ? 'Over budget' : 'Close to budget'}: ${esc(a.text)}</li>`).join('')}</ul>` : ''}
+    ${!list.length && !bills.length ? '<p class="hint">Nothing needs your attention: no bills due soon and you are within every budget.</p>' : ''}
     <div class="error" role="alert"></div>
     <div class="actions"><span class="spacer"></span><button type="button" class="btn primary" data-close>Close</button></div></form>`, { onSubmit() {} });
 }
