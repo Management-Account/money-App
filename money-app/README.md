@@ -198,3 +198,15 @@ The arrows (balance card, deck, month switcher) and the + button now use drawn i
 ## v42
 
 - Debt payments can have an optional **fee** (a bank or wallet charge). Type it in the payment window, and pick the account it is taken from (it starts as the payment's account). The fee is saved as its own expense in a "Payment fees" category, does not reduce the debt, and shows in the payment history. Deleting the fee's transaction keeps the payment; deleting the payment removes both. No SQL changes.
+
+## v43
+
+- Debt payments no longer count as spending or income. Paying back a debt, or being repaid, settles what is owed rather than earning or spending money, so it now behaves like a transfer: it shows in Activity and moves the account balance, but is left out of the Spent / Income totals, the category and Insights charts and the budgets. Only the payment **fee** counts as spending (category "Payment fees"). No SQL changes.
+
+## v44: Recurring transactions & bills
+
+- New **Bills** page. Add a bill or a recurring income: weekly / monthly / yearly (every N), optional end date, reminder (on the day up to 14 days before).
+- Per bill you choose **Automatic** (posted by itself on its date from the account you pick; missed dates are caught up when the app opens) or **I pay it myself** (a Pay / Receive button where you choose the account each time, plus Skip).
+- "Due soon" card on Home, a notification once per day per bill (tap opens Bills), and an app badge where supported.
+- Notifications work while the app is open or running in the background; there is no push server on static hosting, so nothing fires while it is fully closed.
+- **Run the updated `supabase/schema.sql` once** to create the `recurring` table (until then bills stay on the device and a note shows under the sync line).

@@ -246,6 +246,18 @@ const toDebt = (d) => ({
   id: d.id, kind: d.kind, person: d.person, total: d.total, date: d.date || '', due: d.due || '', note: d.note || '', in_networth: d.inNetWorth !== false,
   payments: d.payments || [], updated_at: d.updatedAt || 0, deleted: !!d.deleted,
 });
+const fromRec = (r) => ({
+  id: r.id, kind: r.kind, title: r.title, amount: Number(r.amount) || 0, categoryId: r.category_id || '', accountId: r.account_id || '', freq: r.freq,
+  every: Number(r.every) || 1, start: r.start_date || '', seq: Number(r.seq) || 0, endDate: r.end_date || '', mode: r.mode || 'manual', remind: r.remind ?? 3,
+  note: r.note || '', active: r.active !== false, updatedAt: Number(r.updated_at) || 0, ...(r.deleted ? { deleted: true } : {}),
+});
+const toRec = (r) => ({
+  id: r.id, kind: r.kind, title: r.title, amount: r.amount, category_id: r.categoryId || '', account_id: r.accountId || '', freq: r.freq, every: r.every || 1,
+  start_date: r.start, seq: r.seq || 0, end_date: r.endDate || '', mode: r.mode || 'manual', remind: r.remind ?? 3, note: r.note || '', active: r.active !== false,
+  updated_at: r.updatedAt || 0, deleted: !!r.deleted,
+});
+export const recurringTableMissing = { value: false };
+
 // Older projects may not have the debts table yet: sync everything else and report it instead of failing.
 export const debtsTableMissing = { value: false };
 const isMissingTable = (e, name = 'debts') => e && !(e instanceof NetworkError) && (e.status === 404 || new RegExp(name).test(e.message || ''));
@@ -280,7 +292,7 @@ export async function syncFamily(profiles) {
 // Remove a deleted profile's rows from the account (best effort; the profile itself stays as a deleted marker).
 export async function purgeProfileData(pid) {
   if (!scoped()) return;
-  for (const t of ['transactions', 'accounts', 'categories', 'debts', 'settings']) {
+  for (const t of ['transactions', 'accounts', 'categories', 'debts', 'recurring', 'settings']) {
     try { await rest(`${t}?profile_id=eq.${enc(pid)}`, { method: 'DELETE' }); } catch (e) { if (e instanceof NetworkError) throw e; }
   }
 }
@@ -302,16 +314,19 @@ async function push(table, rows, pid) {
 // whatever is newer locally, and return the merged state.
 export async function syncNow(state, pid = 'main') {
   if (familyMode.value === 'legacy' && pid !== 'main') return state; // older schema: only the first profile is saved to the account
-  const [rc, ra, rt, rs, rd] = await Promise.all([
+  const [rc, ra, rt, rs, rd, rr] = await Promise.all([
     fetchAll('categories', pid), fetchAll('accounts', pid), fetchAll('transactions', pid), rest(`settings?select=*${scoped() ? `&profile_id=eq.${enc(pid)}` : ''}`),
     fetchAll('debts', pid).catch((e) => { if (isMissingTable(e)) return null; throw e; }),
+    fetchAll('recurring', pid).catch((e) => { if (isMissingTable(e, 'recurring')) return null; throw e; }),
   ]);
   debtsTableMissing.value = rd === null;
+  recurringTableMissing.value = rr === null;
   const remote = {
     categories: rc.map(fromCat),
     accounts: ra.map(fromAcc),
     transactions: rt.map(fromTx),
     debts: (rd || []).map(fromDebt),
+    recurring: (rr || []).map(fromRec),
     settings: rs[0] ? { currency: rs[0].currency, theme: rs[0].theme || undefined, graph: rs[0].graph || undefined, balance: rs[0].balance_style || undefined, accountList: rs[0].accounts_list || undefined, nav: rs[0].nav_style || undefined, intro: rs[0].intro_style || undefined, name: rs[0].display_name ?? undefined, avatar: rs[0].avatar ?? undefined, updatedAt: Number(rs[0].updated_at) || 0 } : undefined,
   };
   const merged = mergeState(state, remote);
@@ -323,6 +338,7 @@ export async function syncNow(state, pid = 'main') {
   await push('categories', newer(merged.categories, remote.categories).map(toCat), pid);
   await push('accounts', newer(merged.accounts, remote.accounts).map(toAcc), pid);
   await push('transactions', newer(merged.transactions, remote.transactions).map(toTx), pid);
+  if (rr !== null) await push('recurring', newer(merged.recurring, remote.recurring).map(toRec), pid);
   if (rd !== null) await push('debts', newer(merged.debts, remote.debts).map(toDebt), pid);
   if (merged.settings.updatedAt > (remote.settings?.updatedAt ?? 0)) {
     await push('settings', [{ currency: merged.settings.currency, theme: merged.settings.theme || 'neon', graph: merged.settings.graph || 'classic', balance_style: merged.settings.balance || 'cards', accounts_list: merged.settings.accountList || 'hide', nav_style: merged.settings.nav || 'default', intro_style: merged.settings.intro || 'off', display_name: merged.settings.name || '', avatar: merged.settings.avatar || '', updated_at: merged.settings.updatedAt }], pid);

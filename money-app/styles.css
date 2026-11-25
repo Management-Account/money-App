@@ -1148,3 +1148,31 @@ button.fam-row:hover, .fam-row[aria-current="true"] { border-color: var(--accent
 .sw input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 3px; }
 .fam-av { overflow: hidden; }
 .fam-av img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+/* ---------- bills ---------- */
+.bills { padding: 4px 16px; }
+.bill { padding: 14px 0; border-bottom: 1px solid var(--line, rgba(128,128,128,.2)); }
+.bill:last-child { border-bottom: 0; }
+.bill-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.bill-who { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.bill-who b { overflow-wrap: anywhere; }
+.bill-who small { color: var(--muted); font-size: .8rem; }
+.bill-amt { font-weight: 700; white-space: nowrap; }
+.bill-due.over { color: var(--expense); font-weight: 600; }
+.bill-due.now { color: var(--accent); font-weight: 600; }
+.bill-btns { margin-top: 10px; flex-wrap: wrap; }
+.bill-btns .btn { padding: 10px 16px; }
+.bill-btns .chip { cursor: default; }
+.due-card { margin-bottom: 16px; padding: 14px 16px; }
+.due-card .bill { padding: 10px 0; }
+.rows { padding: 4px 0; }
+.bill-row { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; padding: 12px 16px; background: none; border: 0; border-bottom: 1px solid var(--line, rgba(128,128,128,.2)); color: inherit; font: inherit; cursor: pointer; }
+.bill-row:last-child { border-bottom: 0; }
+.bill-row .grow { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.bill-row small { color: var(--muted); font-size: .78rem; }
+.bill-row.dim { opacity: .65; }
+.bill-ic { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; flex: none; font-weight: 700; background: rgba(128,128,128,.14); }
+.notify-card { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px; margin-bottom: 8px; }
+.notify-card > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.notify-card small { color: var(--muted); }
+.row2 { display: grid; grid-template-columns: 1fr 90px; gap: 10px; }

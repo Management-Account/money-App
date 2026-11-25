@@ -8,11 +8,12 @@ import {
   mergeState, sanitizeState, summarize, toCSV, importCSV, isValidDate, monthsEnding, addDays, daysBetween, unitFor, rangeSeries, balanceBeforeDate, categoryTotalsRange, validLogo,
   toMinorSigned, liveAccounts, fallbackAccountId, accountIdOf, accountSummaries, removeAccount, FEE_CAT, FEE_NAME, isTransferTx, transferLegs, netWorthSeries,
   debtPaid, debtRemaining, debtSettled, debtTotals, addDebtPayment, removeDebtPayment, removeDebt, paymentOfTx, linkDebtTransactions,
+  runAutoRecurring, dueItems, payRecurring, skipRecurring, removeRecurring, nextDate, occurrenceDate,
 } from './store.js';
 import { getCurrencies } from './currencies.js';
 import { columnChart, lineChart, rankedBars, ringGauge, donutChart, attachTips, hideTip } from './charts.js';
 import {
-  cloudEnabled, AuthError, NetworkError, getSession, getOwner, setOwner, signUp, signIn, signOut, setPassword, syncNow, debtsTableMissing, syncFamily, purgeProfileData, familyMode,
+  cloudEnabled, AuthError, NetworkError, getSession, getOwner, setOwner, signUp, signIn, signOut, setPassword, syncNow, debtsTableMissing, recurringTableMissing, syncFamily, purgeProfileData, familyMode,
   USERNAME_RE, normalizeUsername, displayName,
 } from './sync.js';
 
@@ -37,6 +38,7 @@ function load(pid = family.active) {
         s.settings = { currency: 'EGP', updatedAt: 0, ...s.settings };
         if (!Array.isArray(s.accounts)) s.accounts = createState().accounts; // saved before accounts existed
         if (!Array.isArray(s.debts)) s.debts = []; // saved before debts existed
+        if (!Array.isArray(s.recurring)) s.recurring = []; // saved before bills existed
         return linkDebtTransactions(s);
       }
     }
@@ -99,7 +101,7 @@ function runSync() {
         const merged = await syncNow(state, pid);
         // keep any edits the person made while the sync was running (newest edit per record wins);
         // if another profile was opened meanwhile, this one is simply synced again next time
-        if (family.active === pid) { state = linkDebtTransactions(mergeState(state, merged)); save(); }
+        if (family.active === pid) { state = linkDebtTransactions(mergeState(state, merged)); applyAuto(); save(); }
       }
       syncInfo.lastAt = Date.now();
       syncInfo.error = '';
@@ -126,7 +128,7 @@ function syncText() {
   if (inflight) return 'Syncing…';
   if (syncInfo.error === 'offline') return 'Offline. Your changes will sync when you reconnect.';
   if (syncInfo.error) return `Sync problem: ${syncInfo.error}`;
-  if (debtsTableMissing.value) return 'Synced, but debts are not syncing yet: run the updated supabase/schema.sql once (see README).';
+  if (debtsTableMissing.value || recurringTableMissing.value) return `Synced, but ${debtsTableMissing.value ? 'debts' : 'bills'} are not syncing yet: run the updated supabase/schema.sql once (see README).`;
   if (syncInfo.lastAt) return `Synced at ${new Date(syncInfo.lastAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
   return '';
 }
@@ -204,6 +206,7 @@ const ICONS = {
   bell: svg('<path d="M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15z"/><path d="M10 21h4"/>'),
   search: svg('<circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/>'),
   signout: svg('<path d="M9 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h4"/><path d="M16 8l4 4-4 4M20 12H9"/>'),
+  bills: svg('<rect x="3.5" y="5" width="17" height="15" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/><path d="M9 15l2 2 4-4"/>'),
   debts: svg('<path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6"/>'),
   family: svg('<circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><circle cx="17" cy="9" r="2.5"/><path d="M17 14c2.5 0 4 1.8 4 4"/>'),
   settings: svg('<path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/>'),
@@ -217,6 +220,7 @@ const TABS = [
   ['transactions', 'Transactions', 'Activity'],
   ['wallets', 'Accounts', 'Accounts'],
   ['debts', 'Debts', 'Debts'],
+  ['bills', 'Bills', 'Bills'],
   ['insights', 'Insights', 'Insights'],
   ['categories', 'Budgets', 'Budgets'],
 ];
@@ -1034,6 +1038,7 @@ function viewHome() {
       <section class="card d-ring"><h2>Spending by category <span class="muted" style="font-weight:400">· ${esc(monthLabel(ui.month))}</span></h2><div id="donut" class="donut-wrap"></div></section>
       <section class="card chart-card d-month"><h2>Monthly overview</h2><div class="ch" id="ch-six"></div></section>
       <div class="d-rest">
+        ${dueCardHTML()}
         ${accountListMode() === 'show' ? `${classicAccountsHTML(w, s)}<div style="height:20px"></div>` : ''}
         <div class="h2row mrow"><h2>This month</h2>${monthSwitcher()}</div>
         <div class="cards">
@@ -1779,7 +1784,7 @@ function render() {
   }
   renderNav();
   mountNavFx();
-  const views = { home: viewHome, transactions: viewTransactions, wallets: viewWallets, debts: viewDebts, insights: viewInsights, categories: viewCategories, themes: viewThemes, settings: viewSettings, profile: viewProfile };
+  const views = { home: viewHome, transactions: viewTransactions, wallets: viewWallets, debts: viewDebts, bills: viewBills, insights: viewInsights, categories: viewCategories, themes: viewThemes, settings: viewSettings, profile: viewProfile };
   $('#main').innerHTML = views[ui.tab]();
   $('#main').classList.toggle('wide', ui.tab === 'home');
   drawHome();
@@ -1819,6 +1824,219 @@ function openDialog(html, { onSubmit, onDelete, onOpen, confirmText } = {}) {
   }
   dlg.showModal();
   if (onOpen) onOpen(form);
+}
+
+// ---------- recurring transactions & bills ----------
+
+const FREQ_LABEL = { weekly: 'week', monthly: 'month', yearly: 'year' };
+const recEvery = (r) => (r.every > 1 ? `Every ${r.every} ${FREQ_LABEL[r.freq]}s` : { weekly: 'Weekly', monthly: 'Monthly', yearly: 'Yearly' }[r.freq]);
+const accNameOf = (id) => liveAccounts(state).find((a) => a.id === id)?.name || '';
+const dueLabel = (days) => (days < 0 ? `${-days} day${days === -1 ? '' : 's'} overdue` : days === 0 ? 'Due today' : days === 1 ? 'Due tomorrow' : `Due in ${days} days`);
+
+// Post automatic items that have come due. Returns how many were posted (the caller saves and shows it).
+function applyAuto() {
+  const r = runAutoRecurring(state);
+  if (r.posted) { state = r.state; ui.autoPosted = (ui.autoPosted || 0) + r.posted; }
+  return r.posted;
+}
+function flushAuto() {
+  const n = ui.autoPosted || 0;
+  ui.autoPosted = 0;
+  if (n) toast(`Posted ${n} scheduled transaction${n === 1 ? '' : 's'}`);
+}
+function processRecurring() {
+  if (!applyAuto()) { checkReminders(); return; }
+  save();
+  render();
+  flushAuto();
+  scheduleSync();
+  checkReminders();
+}
+
+// One notification per bill per day, and only while the app is open or running in the background.
+function checkReminders() {
+  const items = dueItems(state).filter((i) => i.rec.mode === 'manual' || i.days >= 0);
+  try { navigator.setAppBadge?.(items.filter((i) => i.rec.mode === 'manual').length || 0); if (!items.length) navigator.clearAppBadge?.(); } catch { /* optional */ }
+  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+  const today = todayStr();
+  for (const i of items) {
+    const key = `pl-rem-${activeKey()}-${i.rec.id}-${i.date}`;
+    try { if (localStorage.getItem(key) === today) continue; localStorage.setItem(key, today); } catch { /* still notify */ }
+    const auto = i.rec.mode === 'auto';
+    const title = i.status === 'overdue' ? `Overdue: ${i.rec.title}` : i.status === 'today' ? `${auto ? 'Paying today' : 'Due today'}: ${i.rec.title}` : `${i.rec.title} ${auto ? 'will be paid' : 'is due'} ${i.days === 1 ? 'tomorrow' : `in ${i.days} days`}`;
+    const body = `${money(i.rec.amount)}${auto ? ` · automatic from ${accNameOf(i.rec.accountId) || 'your account'}` : ' · tap to open Bills'}`;
+    navigator.serviceWorker?.ready.then((reg) => reg.showNotification(title, { body, icon: './icons/icon-192.png', badge: './icons/icon-192.png', tag: `bill-${i.rec.id}`, data: { url: './#bills' } })).catch(() => { try { new Notification(title, { body }); } catch { /* ignore */ } });
+  }
+}
+
+function dueRow(i, compact) {
+  const r = i.rec;
+  const inc = r.kind === 'income';
+  const auto = r.mode === 'auto';
+  return `<div class="bill ${i.status}">
+    <div class="bill-top">
+      <div class="bill-who"><b>${esc(r.title)}</b>
+        <small><span class="bill-due ${i.status === 'overdue' ? 'over' : i.status === 'today' ? 'now' : ''}">${esc(dueLabel(i.days))}</span> · ${esc(fmtDay(i.date, { day: 'numeric', month: 'short' }))}${compact ? '' : ` · ${esc(recEvery(r))}`}</small></div>
+      <div class="bill-amt ${inc ? 'income' : 'expense'}">${inc ? '+' : '−'}${esc(money(r.amount))}</div>
+    </div>
+    <div class="btns bill-btns">
+      ${auto ? `<span class="chip on">Automatic · from ${esc(accNameOf(r.accountId) || 'account')}</span>` : `<button class="btn primary" data-action="pay-bill" data-id="${esc(r.id)}">${inc ? 'Receive' : 'Pay'}</button>${compact ? '' : `<button class="btn" data-action="skip-bill" data-id="${esc(r.id)}">Skip</button>`}`}
+    </div>
+  </div>`;
+}
+
+function dueCardHTML() {
+  const items = dueItems(state).filter((i) => i.rec.mode === 'manual').slice(0, 3);
+  if (!items.length) return '';
+  return `<section class="card due-card" aria-label="Due soon"><div class="h2row"><h2>Due soon</h2><button class="link" data-action="tab" data-tab="bills">All bills</button></div>${items.map((i) => dueRow(i, true)).join('')}</section>`;
+}
+
+function viewBills() {
+  const all = live(state.recurring || []);
+  const due = dueItems(state);
+  const needs = due.filter((i) => i.rec.mode === 'manual');
+  const needIds = new Set(needs.map((i) => i.rec.id));
+  const active = all.filter((r) => r.active !== false && nextDate(r));
+  const upcoming = active.filter((r) => !needIds.has(r.id)).sort((a, b) => nextDate(a).localeCompare(nextDate(b)));
+  const idle = all.filter((r) => r.active === false || !nextDate(r));
+  const monthly = active.filter((r) => r.kind === 'expense').reduce((n, r) => n + Math.round((r.amount * (r.freq === 'weekly' ? 52 / 12 : r.freq === 'yearly' ? 1 / 12 : 1)) / r.every), 0);
+  const perm = typeof Notification === 'undefined' ? 'unsupported' : Notification.permission;
+  const upRow = (r) => {
+    const d = nextDate(r);
+    const days = daysBetween(todayStr(), d);
+    const inc = r.kind === 'income';
+    return `<button class="bill-row" data-action="edit-bill" data-id="${esc(r.id)}"><span class="bill-ic ${inc ? 'income' : 'expense'}" aria-hidden="true">${inc ? '↓' : '↑'}</span>
+      <span class="grow"><b>${esc(r.title)}</b><small>${esc(recEvery(r))} · ${esc(dueLabel(days))} · ${esc(fmtDay(d, { day: 'numeric', month: 'short' }))}</small>
+      <small>${r.mode === 'auto' ? `Automatic from ${esc(accNameOf(r.accountId) || 'account')}` : 'You pay it yourself'}</small></span>
+      <b class="${inc ? 'income' : 'expense'}">${inc ? '+' : '−'}${esc(money(r.amount))}</b></button>`;
+  };
+  const idleRow = (r) => `<button class="bill-row dim" data-action="edit-bill" data-id="${esc(r.id)}"><span class="grow"><b>${esc(r.title)}</b><small>${r.active === false ? 'Paused' : 'Finished'} · ${esc(recEvery(r))}</small></span><b>${esc(money(r.amount))}</b></button>`;
+  const tile = (label, value, sub, cls) => `<div class="card tile"><div class="label">${label}</div><div class="value ${cls}">${esc(value)}</div><div class="sub">${esc(sub)}</div></div>`;
+  return `<h1>Bills</h1>
+    <div class="tiles two">
+      ${tile('Needs you', String(needs.length), needs.length ? 'to pay or receive' : 'nothing due soon', needs.some((i) => i.status === 'overdue') ? 'expense' : '')}
+      ${tile('Bills per month', money(monthly), `${active.filter((r) => r.kind === 'expense').length} active`, '')}
+    </div>
+    <div class="btns" style="margin:14px 0">
+      <button class="btn primary" data-action="add-bill" data-kind="expense">New bill</button>
+      <button class="btn" data-action="add-bill" data-kind="income">New recurring income</button>
+    </div>
+    ${perm === 'default' ? `<div class="card notify-card"><div><b>Get reminded</b><small>Allow notifications so Pocket Ledger can tell you when a bill is due soon.</small></div><button class="btn" data-action="enable-notify">Turn on</button></div>` : perm === 'denied' ? '<p class="hint">Notifications are blocked for this app. Turn them on in your browser or phone settings to get reminders. You still see due bills here and on Home.</p>' : ''}
+    ${needs.length ? `<h2 class="sect">Needs your attention</h2><div class="card bills">${needs.map((i) => dueRow(i, false)).join('')}</div>` : ''}
+    <h2 class="sect">Upcoming</h2>
+    ${upcoming.length ? `<div class="card rows">${upcoming.map(upRow).join('')}</div>` : `<div class="card empty">${all.length ? 'Nothing else coming up.' : 'No bills yet. Tap "New bill" to add rent, subscriptions or a salary that repeats.'}</div>`}
+    ${idle.length ? `<h2 class="sect">Paused or finished</h2><div class="card rows">${idle.map(idleRow).join('')}</div>` : ''}
+    <p class="hint">Choose per bill: <b>automatic</b> posts the transaction by itself on its date from the account you pick, or <b>you pay it</b> with the Pay button and choose the account each time. Reminders appear on Home and as notifications while the app is open or running in the background.</p>`;
+}
+
+function openRecurringDialog(id, kind0 = 'expense') {
+  const ex = id ? live(state.recurring || []).find((r) => r.id === id) : null;
+  const r = ex || { id: uid(), kind: kind0, title: '', amount: 0, categoryId: '', accountId: ui.lastAccount || fallbackAccountId(state), freq: 'monthly', every: 1, start: todayStr(), seq: 0, endDate: '', mode: 'manual', remind: 3, note: '', active: true };
+  const next = ex ? nextDate(ex) || occurrenceDate(ex, ex.seq) : r.start;
+  const acc = liveAccounts(state).some((a) => a.id === r.accountId) ? r.accountId : fallbackAccountId(state);
+  openDialog(
+    `<form>
+      <h3>${ex ? 'Edit' : 'New'} ${r.kind === 'income' ? 'recurring income' : 'bill'}</h3>
+      <div class="field"><div class="seg" role="radiogroup" aria-label="Type">
+        <label><input type="radio" name="kind" value="expense" ${r.kind === 'expense' ? 'checked' : ''}>Bill / expense</label>
+        <label><input type="radio" name="kind" value="income" ${r.kind === 'income' ? 'checked' : ''}>Income</label></div></div>
+      <div class="field"><label for="b-title">Name</label><input type="text" id="b-title" name="title" maxlength="60" autocomplete="off" placeholder="Rent, Netflix, Salary" value="${esc(r.title)}"></div>
+      <div class="field"><label for="b-amt">Amount</label><input type="text" id="b-amt" name="amount" inputmode="decimal" autocomplete="off" placeholder="0.00" value="${ex ? esc(fromMinor(r.amount)) : ''}"></div>
+      <div class="field"><label for="b-cat">Category</label><select id="b-cat" name="categoryId">${categoryOptions(r.kind, r.categoryId)}</select></div>
+      <div class="field"><label>Repeats</label>
+        <div class="row2"><select name="freq" aria-label="How often"><option value="weekly" ${r.freq === 'weekly' ? 'selected' : ''}>Weekly</option><option value="monthly" ${r.freq === 'monthly' ? 'selected' : ''}>Monthly</option><option value="yearly" ${r.freq === 'yearly' ? 'selected' : ''}>Yearly</option></select>
+        <input type="number" name="every" min="1" max="99" inputmode="numeric" value="${r.every}" aria-label="Repeat every"></div>
+        <span class="hint">The number is the gap: 1 = every week/month/year, 2 = every other one.</span></div>
+      <div class="field"><label for="b-date">${ex ? 'Next date' : 'First date'}</label><input type="date" id="b-date" name="date" value="${esc(next)}"></div>
+      <div class="field"><label for="b-end">Ends on (optional)</label><input type="date" id="b-end" name="endDate" value="${esc(r.endDate)}"></div>
+      <div class="field"><label>How is it paid?</label><div class="seg" role="radiogroup" aria-label="Payment mode">
+        <label><input type="radio" name="mode" value="manual" ${r.mode !== 'auto' ? 'checked' : ''}>I pay it myself</label>
+        <label><input type="radio" name="mode" value="auto" ${r.mode === 'auto' ? 'checked' : ''}>Automatic</label></div>
+        <span class="hint" id="b-modehint"></span></div>
+      <div class="field"><label for="b-acc" id="b-acclabel">Account</label><select id="b-acc" name="account">${walletOptions(acc)}</select></div>
+      <div class="field"><label for="b-rem">Remind me</label><select id="b-rem" name="remind">${[[0, 'On the day'], [1, '1 day before'], [3, '3 days before'], [7, '7 days before'], [14, '14 days before']].map(([v, l]) => `<option value="${v}" ${r.remind === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+      <div class="field"><label for="b-note">Note (optional)</label><input type="text" id="b-note" name="note" maxlength="140" autocomplete="off" value="${esc(r.note)}"></div>
+      <label class="check"><input type="checkbox" name="active" ${r.active !== false ? 'checked' : ''}><span>Active<small>Turn off to pause it without deleting.</small></span></label>
+      <div class="error" role="alert"></div>
+      <div class="actions">${ex ? '<button type="button" class="btn danger" data-delete>Delete</button>' : ''}<span class="spacer"></span><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Save</button></div>
+    </form>`,
+    {
+      confirmText: `Delete "${r.title}"? Transactions it already posted stay.`,
+      onOpen(form) {
+        const sync = () => {
+          const auto = form.querySelector('[name=mode]:checked').value === 'auto';
+          const inc = form.querySelector('[name=kind]:checked').value === 'income';
+          form.querySelector('#b-acclabel').textContent = auto ? (inc ? 'Deposit automatically into' : 'Withdraw automatically from') : (inc ? 'Usually received into' : 'Usually paid from');
+          form.querySelector('#b-modehint').textContent = auto
+            ? `It is posted by itself on its date ${inc ? 'into' : 'from'} the account below. If the first date is in the past, the missed ones are posted right away.`
+            : 'You get a reminder and press Pay on the day. You can pick a different account each time; the one below is only the suggestion.';
+        };
+        form.querySelectorAll('[name=mode],[name=kind]').forEach((e) => e.addEventListener('change', sync));
+        form.querySelectorAll('[name=kind]').forEach((e) => e.addEventListener('change', () => { form.querySelector('#b-cat').innerHTML = categoryOptions(e.value, ''); }));
+        sync();
+      },
+      onSubmit(fd) {
+        const title = (fd.get('title') || '').trim();
+        if (!title) return 'Give it a name, like Rent or Netflix.';
+        const amount = toMinor(fd.get('amount') || '');
+        if (!Number.isFinite(amount) || amount <= 0) return 'Enter the amount, like 1200 or 49.99.';
+        const date = fd.get('date');
+        if (!isValidDate(date)) return 'Pick a valid date.';
+        const endDate = fd.get('endDate') || '';
+        if (endDate && (!isValidDate(endDate) || endDate < date)) return 'The end date must be on or after the first date.';
+        const every = Math.max(1, Math.min(99, parseInt(fd.get('every'), 10) || 1));
+        const accountId = fd.get('account') || '';
+        if (!liveAccounts(state).some((a) => a.id === accountId)) return 'Pick an account.';
+        const rec = { ...r, kind: fd.get('kind') === 'income' ? 'income' : 'expense', title, amount, categoryId: fd.get('categoryId') || '', accountId, freq: fd.get('freq'), every, endDate, mode: fd.get('mode') === 'auto' ? 'auto' : 'manual', remind: parseInt(fd.get('remind'), 10) || 0, note: (fd.get('note') || '').trim(), active: fd.get('active') === 'on' };
+        // changing the schedule or the date restarts it from the date you picked
+        const sameSchedule = ex && ex.freq === rec.freq && ex.every === every && date === next;
+        if (!sameSchedule) { rec.start = date; rec.seq = 0; }
+        ui.lastAccount = accountId;
+        state = { ...state, recurring: upsert(state.recurring || [], rec) };
+        applyAuto();
+        save(); render(); flushAuto(); scheduleSync(); checkReminders();
+        toast('Saved');
+      },
+      onDelete() {
+        setState(removeRecurring(state, r.id));
+        toast('Deleted');
+      },
+    },
+  );
+}
+
+function openPayBillDialog(id) {
+  const r = live(state.recurring || []).find((x) => x.id === id);
+  const due = r && nextDate(r);
+  if (!due) return;
+  const inc = r.kind === 'income';
+  const acc = liveAccounts(state).some((a) => a.id === r.accountId) ? r.accountId : fallbackAccountId(state);
+  openDialog(
+    `<form>
+      <h3>${inc ? 'Receive' : 'Pay'} ${esc(r.title)}</h3>
+      <p class="hint" style="margin-top:0">${esc(dueLabel(daysBetween(todayStr(), due)))} · ${esc(fmtDay(due, { day: 'numeric', month: 'long' }))}</p>
+      <div class="field"><label for="pb-amt">Amount</label><input type="text" id="pb-amt" name="amount" inputmode="decimal" autocomplete="off" value="${esc(fromMinor(r.amount))}"></div>
+      <div class="field"><label for="pb-acc">${inc ? 'Received into' : 'Pay from'}</label><select id="pb-acc" name="account">${walletOptions(acc)}</select>
+        <span class="hint">${inc ? 'Saved as income in this account.' : 'Saved as an expense in this account, so its balance goes down.'}</span></div>
+      <div class="field"><label for="pb-date">Date</label><input type="date" id="pb-date" name="date" value="${esc(todayStr())}"></div>
+      <div class="error" role="alert"></div>
+      <div class="actions"><span class="spacer"></span><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">${inc ? 'Receive' : 'Pay'}</button></div>
+    </form>`,
+    {
+      onSubmit(fd) {
+        const amount = toMinor(fd.get('amount') || '');
+        if (!Number.isFinite(amount) || amount <= 0) return 'Enter an amount.';
+        const date = fd.get('date');
+        if (!isValidDate(date)) return 'Pick a valid date.';
+        const accountId = fd.get('account') || '';
+        if (!liveAccounts(state).some((a) => a.id === accountId)) return 'Pick an account.';
+        ui.lastAccount = accountId;
+        setState(payRecurring(state, r.id, { accountId, amount, date }));
+        checkReminders();
+        toast(inc ? 'Received' : 'Paid');
+      },
+    },
+  );
 }
 
 function categoryOptions(type, selected) {
@@ -2530,6 +2748,21 @@ document.addEventListener('click', async (e) => {
       ui.txLimit += 50;
       $('#txlist').innerHTML = txListBlock();
       break;
+    case 'add-bill':
+      openRecurringDialog('', el.dataset.kind === 'income' ? 'income' : 'expense');
+      break;
+    case 'edit-bill':
+      openRecurringDialog(id);
+      break;
+    case 'pay-bill':
+      openPayBillDialog(id);
+      break;
+    case 'skip-bill':
+      if (confirm('Skip this one? Nothing is posted and the next date is used.')) { setState(skipRecurring(state, id)); checkReminders(); }
+      break;
+    case 'enable-notify':
+      if (typeof Notification !== 'undefined') Notification.requestPermission().then(() => { render(); checkReminders(); }).catch(() => {});
+      break;
     case 'add-debt':
       openDebtDialog('', el.dataset.kind === 'owed' ? 'owed' : 'owe');
       break;
@@ -2737,7 +2970,15 @@ document.addEventListener('keydown', (e) => {
 // ---------- start ----------
 
 initNavFx();
+if (location.hash === '#bills') ui.tab = 'bills';
+applyAuto();
+save();
 render();
+flushAuto();
+checkReminders();
+setInterval(() => document.visibilityState === 'visible' && processRecurring(), 60_000);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') processRecurring(); });
+navigator.serviceWorker?.addEventListener('message', (e) => { if (e.data?.goto === 'bills') { ui.tab = 'bills'; render(); } });
 if (cloudEnabled) {
   if (getSession()) {
     if (!getOwner()) setOwner(getSession().user.id);

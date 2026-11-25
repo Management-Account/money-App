@@ -125,6 +125,7 @@ export function createState() {
     categories: DEFAULT_CATEGORIES.map(([id, name, type]) => ({ id, name, type, budget: 0, updatedAt: 0 })),
     transactions: [],
     debts: [],
+    recurring: [],
   };
 }
 
@@ -167,6 +168,7 @@ export function mergeState(local, remote) {
     accounts: mergeCollections(local.accounts || [], remote.accounts || []),
     transactions: mergeCollections(local.transactions, remote.transactions),
     debts: mergeCollections(local.debts || [], remote.debts || []),
+    recurring: mergeCollections(local.recurring || [], remote.recurring || []),
   };
 }
 
@@ -240,6 +242,7 @@ export function sanitizeState(obj) {
       ...(a.deleted ? { deleted: true } : {}),
     }));
   const debts = (Array.isArray(obj.debts) ? obj.debts : []).map(cleanDebt).filter(Boolean);
+  const recurring = (Array.isArray(obj.recurring) ? obj.recurring : []).map(cleanRecurring).filter(Boolean);
   const cur = typeof obj.settings?.currency === 'string' ? obj.settings.currency.toUpperCase() : '';
   const currency = /^[A-Z]{3}$/.test(cur) ? cur : 'EGP';
   const updatedAt = Number.isFinite(obj.settings?.updatedAt) ? obj.settings.updatedAt : 0;
@@ -251,7 +254,7 @@ export function sanitizeState(obj) {
   const theme = isTheme(obj.settings?.theme) ? obj.settings.theme : DEFAULT_THEME;
   const name = typeof obj.settings?.name === 'string' ? obj.settings.name.trim().slice(0, 40) : '';
   const avatar = validLogo(obj.settings?.avatar);
-  return { version: SCHEMA_VERSION, settings: { currency, theme, graph, balance, accountList, nav, intro, name, avatar, updatedAt }, categories, accounts, transactions, debts };
+  return { version: SCHEMA_VERSION, settings: { currency, theme, graph, balance, accountList, nav, intro, name, avatar, updatedAt }, categories, accounts, transactions, debts, recurring };
 }
 
 // ---------- debts ----------
@@ -412,6 +415,8 @@ export function flow(t) {
   // A transfer is saved as an expense in the source account, an income in the destination account and, if there
   // is a fee, a fee expense. They keep balances right; only the fee counts as spending in the budget analytics.
   if (t.transferId) return t.leg === 'fee' ? { income: 0, expense: t.amount, feeOnly: true } : { income: 0, expense: 0, feeOnly: true };
+  // Paying back a debt (or being repaid) moves money and settles what is owed; it is not spending or earning, so only its fee counts.
+  if (t.categoryId === DEBT_PAY_CAT || t.categoryId === DEBT_GET_CAT) return { income: 0, expense: 0, feeOnly: true };
   if (t.type === 'income') return { income: t.amount, expense: 0, feeOnly: false };
   if (t.type === 'transfer') return { income: 0, expense: t.fee || 0, feeOnly: true };
   return { income: 0, expense: t.amount, feeOnly: false };
@@ -466,6 +471,140 @@ export function summarize(state, month) {
   }
   const byCategory = [...rows.values()].sort((a, b) => b.spent - a.spent);
   return { income, expense, net: income - expense, count: txs.length, byCategory };
+}
+
+// ---------- recurring transactions & bills ----------
+
+export const FREQS = ['weekly', 'monthly', 'yearly'];
+const UUIDISH = (v) => typeof v === 'string' && UUID_RE.test(v);
+
+export function cleanRecurring(r) {
+  if (!r || !UUIDISH(r.id)) return null;
+  if (r.kind !== 'expense' && r.kind !== 'income') return null;
+  if (!Number.isSafeInteger(r.amount) || r.amount <= 0) return null;
+  const title = typeof r.title === 'string' ? r.title.trim().slice(0, 60) : '';
+  if (!title || !FREQS.includes(r.freq) || !isValidDate(r.start)) return null;
+  return {
+    id: r.id, kind: r.kind, title, amount: r.amount,
+    categoryId: UUIDISH(r.categoryId) ? r.categoryId : '',
+    accountId: UUIDISH(r.accountId) ? r.accountId : '',
+    freq: r.freq,
+    every: Number.isSafeInteger(r.every) && r.every >= 1 && r.every <= 99 ? r.every : 1,
+    start: r.start,
+    seq: Number.isSafeInteger(r.seq) && r.seq >= 0 ? r.seq : 0,
+    endDate: isValidDate(r.endDate) ? r.endDate : '',
+    mode: r.mode === 'auto' ? 'auto' : 'manual',
+    remind: Number.isSafeInteger(r.remind) && r.remind >= 0 && r.remind <= 30 ? r.remind : 3,
+    note: typeof r.note === 'string' ? r.note.slice(0, 200) : '',
+    active: r.active !== false,
+    updatedAt: Number.isFinite(r.updatedAt) ? r.updatedAt : 0,
+    ...(r.deleted ? { deleted: true } : {}),
+  };
+}
+
+function addMonths(dateStr, n) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const t = y * 12 + (m - 1) + n;
+  const ny = Math.floor(t / 12), nm = t % 12;
+  const last = new Date(Date.UTC(ny, nm + 1, 0)).getUTCDate();
+  return `${String(ny).padStart(4, '0')}-${String(nm + 1).padStart(2, '0')}-${String(Math.min(d, last)).padStart(2, '0')}`;
+}
+
+// The date of occurrence number i (0 = the first). Computed from the start date each time, so a bill on the 31st
+// goes back to the 31st after a short month instead of drifting.
+export function occurrenceDate(r, i) {
+  const e = r.every || 1;
+  if (r.freq === 'weekly') return addDays(r.start, 7 * e * i);
+  if (r.freq === 'monthly') return addMonths(r.start, e * i);
+  return addMonths(r.start, 12 * e * i);
+}
+
+export function nextDate(r) {
+  const d = occurrenceDate(r, r.seq || 0);
+  return r.endDate && d > r.endDate ? '' : d;
+}
+
+// The same bill+date gives the same transaction id on every device, so two devices posting it never duplicate.
+export function occId(recId, date) {
+  const str = recId + '|' + date;
+  let h1 = 0xdeadbeef, h2 = 0x41c6ce57, h3 = 0x9e3779b9, h4 = 0x85ebca6b;
+  for (let i = 0; i < str.length; i++) {
+    const c = str.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 2654435761); h2 = Math.imul(h2 ^ c, 1597334677);
+    h3 = Math.imul(h3 ^ c, 2246822519); h4 = Math.imul(h4 ^ c, 3266489917);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h3 ^ (h3 >>> 13), 3266489909);
+  h3 = Math.imul(h3 ^ (h3 >>> 16), 2246822507) ^ Math.imul(h4 ^ (h4 >>> 13), 3266489909);
+  h4 = Math.imul(h4 ^ (h4 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  const hex = [h1, h2, h3, h4].map((n) => (n >>> 0).toString(16).padStart(8, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-${'89ab'[parseInt(hex[16], 16) & 3]}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
+function occTx(state, r, date, accountId) {
+  const acc = (state.accounts || []).find((a) => a.id === accountId && !a.deleted);
+  return {
+    id: occId(r.id, date), type: r.kind, amount: r.amount, categoryId: r.categoryId || '',
+    accountId: acc ? acc.id : fallbackAccountId(state), date,
+    note: (r.note ? `${r.title} · ${r.note}` : r.title).slice(0, 200),
+  };
+}
+
+// Post every automatic occurrence that has come due (catching up if the app was closed for a while).
+// Returns { state, posted } where posted is how many transactions were added.
+export function runAutoRecurring(state, today = todayStr()) {
+  let st = state, posted = 0;
+  for (const r0 of live(state.recurring || [])) {
+    if (r0.mode !== 'auto' || r0.active === false) continue;
+    let r = r0, seq = r0.seq || 0, guard = 0;
+    while (guard++ < 400) {
+      const d = occurrenceDate({ ...r, seq }, seq);
+      if (d > today || (r.endDate && d > r.endDate)) break;
+      const id = occId(r.id, d);
+      if (!(st.transactions || []).some((t) => t.id === id)) { // an existing (even deleted) one means it was already handled
+        st = { ...st, transactions: upsert(st.transactions, occTx(st, r, d, r.accountId)) };
+        posted++;
+      }
+      seq++;
+    }
+    if (seq !== (r0.seq || 0)) st = { ...st, recurring: upsert(st.recurring, { ...r0, seq }) };
+  }
+  return { state: st, posted };
+}
+
+// Bills the user pays by hand (and heads-ups for automatic ones) that are overdue, due today or due within their reminder window.
+export function dueItems(state, today = todayStr()) {
+  const out = [];
+  for (const r of live(state.recurring || [])) {
+    if (r.active === false) continue;
+    const date = nextDate(r);
+    if (!date) continue;
+    const days = daysBetween(today, date);
+    if (days > (r.remind ?? 3)) continue;
+    if (r.mode === 'auto' && days < 0) continue;
+    out.push({ rec: r, date, days, status: days < 0 ? 'overdue' : days === 0 ? 'today' : 'soon' });
+  }
+  return out.sort((a, b) => a.days - b.days || a.rec.title.localeCompare(b.rec.title));
+}
+
+// The user presses Pay / Receive: post the due occurrence from the chosen account and move to the next one.
+export function payRecurring(state, recId, { accountId, amount, date } = {}) {
+  const r = (state.recurring || []).find((x) => x.id === recId && !x.deleted);
+  const due = r && nextDate(r);
+  if (!due) return state;
+  const t = occTx(state, { ...r, amount: Number.isSafeInteger(amount) && amount > 0 ? amount : r.amount }, due, accountId || r.accountId);
+  if (isValidDate(date)) t.date = date;
+  return { ...state, transactions: upsert(state.transactions, t), recurring: upsert(state.recurring, { ...r, seq: (r.seq || 0) + 1 }) };
+}
+
+export function skipRecurring(state, recId) {
+  const r = (state.recurring || []).find((x) => x.id === recId && !x.deleted);
+  if (!r || !nextDate(r)) return state;
+  return { ...state, recurring: upsert(state.recurring, { ...r, seq: (r.seq || 0) + 1 }) };
+}
+
+export function removeRecurring(state, recId) {
+  return { ...state, recurring: remove(state.recurring || [], recId) };
 }
 
 // ---------- wallets (accounts) ----------

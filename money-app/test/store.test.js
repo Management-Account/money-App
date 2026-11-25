@@ -685,3 +685,92 @@ test('an optional payment fee is its own expense, does not reduce the debt, and 
   const noFee = addDebtPayment(debtState(), owe, { id: pid, date: '2026-11-09', amount: 1000, accountId: DEFAULT_ACCOUNT_ID, note: '', fee: 0 });
   assert.equal(noFee.debts.find((d) => d.id === D1).payments.at(-1).fee, undefined);
 });
+
+test('debt principal is not spending or income, but moves the balance; the fee still counts as spending', () => {
+  let s = debtState();
+  const owe = s.debts.find((d) => d.id === D1);
+  const owed = s.debts.find((d) => d.id === D2);
+  s = addDebtPayment(s, owe, { id: '99999999-9999-4999-8999-999999999991', date: '2026-11-10', amount: 10000, accountId: DEFAULT_ACCOUNT_ID, note: '', fee: 300, feeId: '99999999-9999-4999-8999-999999999992', feeAccountId: DEFAULT_ACCOUNT_ID });
+  s = addDebtPayment(s, owed, { id: '99999999-9999-4999-8999-999999999993', date: '2026-11-11', amount: 4000, accountId: DEFAULT_ACCOUNT_ID, note: '' });
+  const sum = summarize(s, '2026-11');
+  assert.equal(sum.expense, 300); // only the fee
+  assert.equal(sum.income, 0);
+  assert.equal(accountSummaries(s).total, 100000 - 10000 - 300 + 4000); // balances still move
+});
+
+// ---------- recurring ----------
+import { occurrenceDate as occD, occId as occI, runAutoRecurring as runAuto, dueItems as dueI, payRecurring as payRec, skipRecurring as skipRec, nextDate as nextD, cleanRecurring as cleanRec, sanitizeState as sanS, createState as mk, DEFAULT_ACCOUNT_ID as DEF, upsert as ups } from '../js/store.js';
+const mkRec = (o = {}) => ({ id: '11111111-1111-4111-8111-111111111111', kind: 'expense', title: 'Rent', amount: 1000, categoryId: '', accountId: DEF, freq: 'monthly', every: 1, start: '2026-01-31', seq: 0, endDate: '', mode: 'auto', remind: 3, note: '', active: true, updatedAt: 1, ...o });
+const withRec = (r) => ({ ...mk(), recurring: [r] });
+
+test('monthly occurrences keep the day and clamp short months without drifting', () => {
+  const r = mkRec();
+  assert.equal(occD(r, 0), '2026-01-31');
+  assert.equal(occD(r, 1), '2026-02-28');
+  assert.equal(occD(r, 2), '2026-03-31');
+  assert.equal(occD({ ...r, freq: 'weekly', start: '2026-01-01', every: 2 }, 2), '2026-01-29');
+  assert.equal(occD({ ...r, freq: 'yearly', start: '2024-02-29' }, 1), '2025-02-28');
+});
+
+test('occId is a deterministic valid uuid', () => {
+  const a = occI('x', '2026-01-01');
+  assert.match(a, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  assert.equal(a, occI('x', '2026-01-01'));
+  assert.notEqual(a, occI('x', '2026-01-02'));
+});
+
+test('automatic items catch up, post to the chosen account and never duplicate', () => {
+  const st = withRec(mkRec({ start: '2026-01-31' }));
+  const { state, posted } = runAuto(st, '2026-03-15');
+  assert.equal(posted, 2);
+  assert.deepEqual(state.transactions.map((t) => t.date).sort(), ['2026-01-31', '2026-02-28']);
+  assert.ok(state.transactions.every((t) => t.type === 'expense' && t.accountId === DEF && t.amount === 1000));
+  assert.equal(nextD(state.recurring[0]), '2026-03-31');
+  assert.equal(runAuto(state, '2026-03-15').posted, 0);
+  // another device with seq still 0 posts nothing new (same ids)
+  const other = { ...state, recurring: [mkRec({ seq: 0 })] };
+  assert.equal(runAuto(other, '2026-03-15').state.transactions.length, 2);
+});
+
+test('a deleted automatic transaction is not re-posted', () => {
+  const { state } = runAuto(withRec(mkRec()), '2026-01-31');
+  const gone = { ...state, transactions: state.transactions.map((t) => ({ ...t, deleted: true })), recurring: [mkRec({ seq: 0 })] };
+  assert.equal(runAuto(gone, '2026-01-31').posted, 0);
+});
+
+test('end date and paused items stop auto posting', () => {
+  assert.equal(runAuto(withRec(mkRec({ endDate: '2026-02-28' })), '2026-06-01').posted, 2);
+  assert.equal(runAuto(withRec(mkRec({ active: false })), '2026-06-01').posted, 0);
+});
+
+test('manual items are due soon, then paid from a chosen account', () => {
+  const acc = '22222222-2222-4222-8222-222222222222';
+  let st = withRec(mkRec({ mode: 'manual', start: '2026-03-10', remind: 3 }));
+  st = { ...st, accounts: ups(st.accounts, { id: acc, name: 'Bank', opening: 0 }) };
+  assert.equal(dueI(st, '2026-03-01').length, 0);
+  assert.equal(dueI(st, '2026-03-08')[0].status, 'soon');
+  assert.equal(dueI(st, '2026-03-10')[0].status, 'today');
+  assert.equal(dueI(st, '2026-03-12')[0].status, 'overdue');
+  assert.equal(runAuto(st, '2026-03-12').posted, 0);
+  const paid = payRec(st, st.recurring[0].id, { accountId: acc, amount: 900, date: '2026-03-11' });
+  assert.equal(paid.transactions.length, 1);
+  assert.equal(paid.transactions[0].accountId, acc);
+  assert.equal(paid.transactions[0].amount, 900);
+  assert.equal(nextD(paid.recurring[0]), '2026-04-10');
+  const skipped = skipRec(st, st.recurring[0].id);
+  assert.equal(skipped.transactions.length, 0);
+  assert.equal(nextD(skipped.recurring[0]), '2026-04-10');
+});
+
+test('automatic items only give a heads-up before they run', () => {
+  const st = withRec(mkRec({ start: '2026-03-10' }));
+  assert.equal(dueI(st, '2026-03-08').length, 1);
+  assert.equal(dueI(st, '2026-03-12').length, 0);
+});
+
+test('recurring survives sanitize and rejects bad records', () => {
+  const st = sanS(JSON.parse(JSON.stringify(withRec(mkRec()))));
+  assert.equal(st.recurring.length, 1);
+  assert.equal(cleanRec({ ...mkRec(), amount: 0 }), null);
+  assert.equal(cleanRec({ ...mkRec(), freq: 'daily' }), null);
+});

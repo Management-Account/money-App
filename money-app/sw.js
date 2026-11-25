@@ -1,6 +1,6 @@
 // Service worker: caches the app shell so the app opens offline.
 // Bump CACHE whenever you deploy changes so installed copies refresh.
-const CACHE = 'pocket-ledger-v42';
+const CACHE = 'pocket-ledger-v44';
 const ASSETS = [
   './',
   './index.html',
@@ -54,6 +54,19 @@ self.addEventListener('fetch', (e) => {
       } catch {
         return req.mode === 'navigate' ? cache.match('./index.html') : Response.error();
       }
+    }),
+  );
+});
+
+// Tapping a reminder opens (or focuses) the app on the Bills page.
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  e.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
+      for (const c of list) {
+        if ('focus' in c) { c.postMessage({ goto: 'bills' }); return c.focus(); }
+      }
+      return self.clients.openWindow('./#bills');
     }),
   );
 });
