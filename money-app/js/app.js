@@ -1889,6 +1889,7 @@ function dueRow(i, compact) {
     </div>
     <div class="btns bill-btns">
       ${auto ? `<span class="chip on">Automatic · from ${esc(accNameOf(r.accountId) || 'account')}</span>` : `<button class="btn primary" data-action="pay-bill" data-id="${esc(r.id)}">${inc ? 'Receive' : 'Pay'}</button>${compact ? '' : `<button class="btn" data-action="skip-bill" data-id="${esc(r.id)}">Skip</button>`}`}
+      <button class="btn" data-action="edit-bill" data-id="${esc(r.id)}">Edit</button>
     </div>
   </div>`;
 }
