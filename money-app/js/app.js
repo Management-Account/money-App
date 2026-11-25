@@ -7,7 +7,7 @@ import {
   SCHEMA_VERSION, uid, todayStr, monthKey, shiftMonth, toMinor, fromMinor, formatMoney, createState, live, upsert, remove,
   mergeState, sanitizeState, summarize, toCSV, importCSV, isValidDate, monthsEnding, addDays, daysBetween, unitFor, rangeSeries, balanceBeforeDate, categoryTotalsRange, validLogo,
   toMinorSigned, liveAccounts, fallbackAccountId, accountIdOf, accountSummaries, removeAccount, FEE_CAT, FEE_NAME, isTransferTx, transferLegs, netWorthSeries,
-  debtPaid, debtRemaining, debtSettled, debtTotals,
+  debtPaid, debtRemaining, debtSettled, debtTotals, addDebtPayment, removeDebtPayment, removeDebt, paymentOfTx, linkDebtTransactions,
 } from './store.js';
 import { getCurrencies } from './currencies.js';
 import { columnChart, lineChart, rankedBars, ringGauge, donutChart, attachTips, hideTip } from './charts.js';
@@ -37,7 +37,7 @@ function load(pid = family.active) {
         s.settings = { currency: 'EGP', updatedAt: 0, ...s.settings };
         if (!Array.isArray(s.accounts)) s.accounts = createState().accounts; // saved before accounts existed
         if (!Array.isArray(s.debts)) s.debts = []; // saved before debts existed
-        return s;
+        return linkDebtTransactions(s);
       }
     }
   } catch {
@@ -99,7 +99,7 @@ function runSync() {
         const merged = await syncNow(state, pid);
         // keep any edits the person made while the sync was running (newest edit per record wins);
         // if another profile was opened meanwhile, this one is simply synced again next time
-        if (family.active === pid) { state = mergeState(state, merged); save(); }
+        if (family.active === pid) { state = linkDebtTransactions(mergeState(state, merged)); save(); }
       }
       syncInfo.lastAt = Date.now();
       syncInfo.error = '';
@@ -1209,7 +1209,7 @@ function debtCard(d) {
       <button class="btn" data-action="edit-debt" data-id="${esc(d.id)}">Edit</button>
     </div>
     ${pays.length ? `<details class="debt-hist"><summary>${pays.length} payment${pays.length === 1 ? '' : 's'}</summary><ul>${pays
-      .map((p) => `<li><span>${esc(fmtDay(p.date, { day: 'numeric', month: 'short', year: 'numeric' }))}${p.accountId && accName(p.accountId) ? ` \u00b7 ${esc(accName(p.accountId))}` : ''}${p.note ? ` \u00b7 ${esc(p.note)}` : ''}</span><b>${esc(money(p.amount))}</b><button class="mini-x" data-action="del-payment" data-id="${esc(d.id)}" data-pid="${esc(p.id)}" aria-label="Delete this payment">\u00d7</button></li>`)
+      .map((p) => `<li><span>${esc(fmtDay(p.date, { day: 'numeric', month: 'short', year: 'numeric' }))}${p.accountId && accName(p.accountId) ? ` \u00b7 ${esc(accName(p.accountId))}` : ''}${p.note ? ` \u00b7 ${esc(p.note)}` : ''}${p.fee ? ` \u00b7 fee ${esc(money(p.fee))}` : ''}</span><b>${esc(money(p.amount))}</b><button class="mini-x" data-action="del-payment" data-id="${esc(d.id)}" data-pid="${esc(p.id)}" aria-label="Delete this payment">\u00d7</button></li>`)
       .join('')}</ul></details>` : ''}
   </article>`;
 }
@@ -1264,7 +1264,7 @@ function openDebtDialog(id, kind0 = 'owe') {
       </div>
     </form>`,
     {
-      confirmText: `Delete the debt with "${d.person}" and its payment history? Money already moved in accounts by its payments will move back.`,
+      confirmText: `Delete the debt with "${d.person}" and its payment history? The transactions of its payments are deleted too, so those accounts change back.`,
       onSubmit(fd) {
         const person = (fd.get('person') || '').trim();
         if (!person) return 'Enter who this debt is with.';
@@ -1279,7 +1279,7 @@ function openDebtDialog(id, kind0 = 'owe') {
         toast('Debt saved');
       },
       onDelete() {
-        setState({ ...state, debts: remove(state.debts || [], d.id) });
+        setState(removeDebt(state, d.id));
         toast('Debt deleted');
       },
     },
@@ -1300,8 +1300,13 @@ function openPaymentDialog(id, full) {
         <div class="btns" style="margin-top:8px"><button type="button" class="btn" id="p-full">${owe ? 'Pay the full' : 'Receive the full'} ${esc(money(left))}</button></div></div>
       <div class="field"><label for="p-date">Date</label><input type="date" id="p-date" name="date" value="${esc(todayStr())}"></div>
       <div class="field"><label for="p-acc">Account</label>
-        <select id="p-acc" name="account"><option value="">Do not change any account</option>${walletOptions('')}</select>
-        <span class="hint">${owe ? 'Choose where the money comes from and that account goes down.' : 'Choose where the money was paid into and that account goes up.'} This is not counted as income or spending.</span></div>
+        <select id="p-acc" name="account">${walletOptions(liveAccounts(state).some((a) => a.id === ui.lastAccount) ? ui.lastAccount : fallbackAccountId(state))}</select>
+        <span class="hint">${owe ? 'Saved as an expense in this account, so its balance goes down.' : 'Saved as an income in this account, so its balance goes up.'} You will find it in Activity.</span></div>
+      <div class="field"><label for="p-fee">Payment fee (optional)</label>
+        <input type="text" id="p-fee" name="fee" inputmode="decimal" autocomplete="off" placeholder="0.00">
+        <span class="hint">A bank or wallet charge for this payment. It is saved as its own expense and does not reduce the debt.</span></div>
+      <div class="field" id="p-feeacc-wrap" hidden><label for="p-feeacc">Fee taken from</label>
+        <select id="p-feeacc" name="feeAccount">${walletOptions(liveAccounts(state).some((a) => a.id === ui.lastAccount) ? ui.lastAccount : fallbackAccountId(state))}</select></div>
       <div class="field"><label for="p-note">Note (optional)</label><input type="text" id="p-note" name="note" maxlength="120" autocomplete="off"></div>
       <div class="error" role="alert"></div>
       <div class="actions"><span class="spacer"></span><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Save payment</button></div>
@@ -1309,6 +1314,11 @@ function openPaymentDialog(id, full) {
     {
       onOpen(form) {
         form.querySelector('#p-full').addEventListener('click', () => { form.querySelector('#p-amt').value = fromMinor(left); });
+        // the fee comes from the payment's account unless you pick another
+        const feeAcc = form.querySelector('#p-feeacc');
+        form.querySelector('#p-acc').addEventListener('change', (e) => { if (!feeAcc.dataset.touched) feeAcc.value = e.target.value; });
+        feeAcc.addEventListener('change', () => { feeAcc.dataset.touched = '1'; });
+        form.querySelector('#p-fee').addEventListener('input', (e) => { form.querySelector('#p-feeacc-wrap').hidden = !e.target.value.trim(); });
         if (!full) form.querySelector('#p-amt').focus();
       },
       onSubmit(fd) {
@@ -1317,8 +1327,19 @@ function openPaymentDialog(id, full) {
         if (amount > left) return `That is more than the ${money(left)} still ${owe ? 'to pay' : 'to collect'}.`;
         const date = fd.get('date');
         if (!isValidDate(date)) return 'Pick a valid date.';
-        const payment = { id: uid(), date, amount, accountId: fd.get('account') || '', note: (fd.get('note') || '').trim() };
-        setState({ ...state, debts: upsert(state.debts || [], { ...d, payments: [...(d.payments || []), payment] }) });
+        const accountId = fd.get('account') || '';
+        if (!liveAccounts(state).some((a) => a.id === accountId)) return 'Pick the account this payment goes through.';
+        const payment = { id: uid(), date, amount, accountId, note: (fd.get('note') || '').trim() };
+        const feeText = (fd.get('fee') || '').trim();
+        if (feeText) {
+          const fee = toMinor(feeText);
+          if (!Number.isFinite(fee) || fee <= 0) return 'Enter the fee as an amount, like 5 or 2.50, or leave it empty.';
+          const feeAccountId = fd.get('feeAccount') || accountId;
+          if (!liveAccounts(state).some((a) => a.id === feeAccountId)) return 'Pick the account the fee is taken from.';
+          Object.assign(payment, { fee, feeId: uid(), feeAccountId });
+        }
+        ui.lastAccount = accountId;
+        setState(addDebtPayment(state, d, payment));
         toast(amount === left ? 'Paid in full' : 'Payment saved');
       },
     },
@@ -1914,6 +1935,7 @@ function openTxDialog(id) {
         const type = fd.get('type');
         const note = (fd.get('note') || '').trim();
         let txs = state.transactions;
+        let debts = state.debts || [];
         if (type === 'transfer') {
           const toAccountId = fd.get('toAccountId');
           if (liveAccountsCount() < 2) return 'You need at least two accounts to make a transfer. Add another account first.';
@@ -1935,16 +1957,39 @@ function openTxDialog(id) {
           else if (group?.byLeg?.fee) txs = remove(txs, group.byLeg.fee.id);
         } else {
           if (group) for (const l of group.all) txs = remove(txs, l.id);
+          // a transaction made by a debt payment keeps its debt in step: same amount, date and account
+          const link = existing && !group ? paymentOfTx(state, existing.id) : null;
+          if (link) {
+            if (type !== existing.type) return 'This comes from a debt payment, so it stays an ' + existing.type + '. Delete the payment from the Debts page instead.';
+            if (link.isFee) {
+              debts = upsert(debts, { ...link.debt, payments: link.debt.payments.map((p) => (p.id === link.payment.id ? { ...p, fee: amount, feeAccountId: accountId } : p)) });
+            } else {
+              if (amount > debtRemaining(link.debt) + link.payment.amount) return `That is more than the debt allows (${money(debtRemaining(link.debt) + link.payment.amount)}).`;
+              debts = upsert(debts, { ...link.debt, payments: link.debt.payments.map((p) => (p.id === link.payment.id ? { ...p, amount, date, accountId } : p)) });
+            }
+          }
           txs = upsert(txs, { id: group ? uid() : tx.id, type, amount, categoryId: fd.get('categoryId') || '', accountId, date, note });
         }
         ui.lastAccount = accountId;
         ui.month = monthKey(date);
-        setState({ ...state, transactions: txs });
+        setState({ ...state, transactions: txs, debts });
       },
       onDelete() {
         let txs = state.transactions;
-        for (const l of group ? group.all : [tx]) txs = remove(txs, l.id);
-        setState({ ...state, transactions: txs });
+        let debts = state.debts || [];
+        for (const l of group ? group.all : [tx]) {
+          txs = remove(txs, l.id);
+          const link = paymentOfTx(state, l.id);
+          if (!link) continue;
+          const cur = (debts.find((d) => d.id === link.debt.id) || link.debt).payments;
+          if (link.isFee) { // deleting only the fee keeps the payment
+            debts = upsert(debts, { ...link.debt, payments: cur.map((p) => { if (p.id !== link.payment.id) return p; const { fee, feeId, feeAccountId, ...rest } = p; return rest; }) });
+          } else { // deleting a payment's transaction takes the payment (and its fee) off the debt
+            debts = upsert(debts, { ...link.debt, payments: cur.filter((p) => p.id !== l.id) });
+            if (link.payment.feeId) txs = remove(txs, link.payment.feeId);
+          }
+        }
+        setState({ ...state, transactions: txs, debts });
         toast('Transaction deleted');
       },
     },
@@ -2496,8 +2541,8 @@ document.addEventListener('click', async (e) => {
       break;
     case 'del-payment': {
       const d = live(state.debts || []).find((x) => x.id === id);
-      if (d && confirm('Delete this payment? Any account it changed will change back.')) {
-        setState({ ...state, debts: upsert(state.debts, { ...d, payments: d.payments.filter((p) => p.id !== el.dataset.pid) }) });
+      if (d && confirm('Delete this payment? Its transaction is deleted too and the account changes back.')) {
+        setState(removeDebtPayment(state, id, el.dataset.pid));
         toast('Payment deleted');
       }
       break;

@@ -538,7 +538,7 @@ test('nav and opening animation settings are kept, and bad values fall back', ()
 });
 
 // ---------- debts ----------
-import { debtPaid, debtRemaining, debtSettled, debtTotals, cleanDebt, netWorthSeries } from '../js/store.js';
+import { debtPaid, debtRemaining, debtSettled, debtTotals, cleanDebt, netWorthSeries, addDebtPayment, removeDebtPayment, removeDebt, linkDebtTransactions, paymentOfTx, DEBT_PAY_CAT, DEBT_GET_CAT, DEBT_FEE_CAT } from '../js/store.js';
 const D1 = '33333333-3333-4333-8333-333333333333';
 const D2 = '44444444-4444-4444-8444-444444444444';
 const debtState = () => {
@@ -566,7 +566,7 @@ test('debt totals and the net worth opt-in', () => {
 });
 
 test('a payment with an account moves that balance, and net worth stays consistent', () => {
-  const s = debtState();
+  const s = linkDebtTransactions(debtState()); // older payments get their transaction
   assert.equal(accountSummaries(s).total, 80000); // 100000 - 20000 paid from Cash
   const { values } = netWorthSeries(s, '2026-11-01', '2026-11-06', 'day');
   assert.equal(values[0], 100000 - 50000); // owing 50000 counted on day 1
@@ -575,7 +575,7 @@ test('a payment with an account moves that balance, and net worth stays consiste
 });
 
 test('uncounted debts do not change net worth, but account payments still do', () => {
-  let s = debtState();
+  let s = linkDebtTransactions(debtState());
   s = { ...s, debts: s.debts.map((d) => (d.id === D1 ? { ...d, inNetWorth: false } : d)) };
   const { values } = netWorthSeries(s, '2026-11-01', '2026-11-06', 'day');
   assert.equal(values[0], 100000);
@@ -632,4 +632,56 @@ test('PIN is stored as a salted hash and checked correctly', async () => {
   assert.ok(await checkPin('4821', h));
   assert.ok(!(await checkPin('4822', h)));
   assert.notEqual(await makePin('4821'), h); // new salt each time
+});
+
+test('a debt payment is also a transaction: expense when I pay, income when I am repaid', () => {
+  let s = debtState();
+  const owe = s.debts.find((d) => d.id === D1);
+  s = addDebtPayment(s, owe, { id: '55555555-5555-4555-8555-555555555555', date: '2026-11-07', amount: 10000, accountId: DEFAULT_ACCOUNT_ID, note: 'rent' });
+  const tx = s.transactions.find((t) => t.id === '55555555-5555-4555-8555-555555555555');
+  assert.equal(tx.type, 'expense');
+  assert.equal(tx.amount, 10000);
+  assert.equal(tx.categoryId, DEBT_PAY_CAT);
+  assert.ok(tx.note.includes('Ali') && tx.note.includes('rent'));
+  assert.ok(s.categories.some((c) => c.id === DEBT_PAY_CAT) && s.categories.some((c) => c.id === DEBT_GET_CAT));
+  const owed = s.debts.find((d) => d.id === D2);
+  s = addDebtPayment(s, owed, { id: '66666666-6666-4666-8666-666666666666', date: '2026-11-08', amount: 5000, accountId: DEFAULT_ACCOUNT_ID, note: '' });
+  assert.equal(s.transactions.find((t) => t.id === '66666666-6666-4666-8666-666666666666').type, 'income');
+  assert.equal(accountSummaries(linkDebtTransactions(s)).total, 100000 - 20000 - 10000 + 5000);
+  assert.equal(paymentOfTx(s, '55555555-5555-4555-8555-555555555555').debt.id, D1);
+});
+
+test('deleting a payment or a debt takes its transactions away; linking old payments is idempotent', () => {
+  let s = linkDebtTransactions(debtState());
+  assert.equal(linkDebtTransactions(s), s); // nothing left to create
+  assert.equal(live(s.transactions).filter((t) => t.id === 'p1').length, 1);
+  const after = removeDebtPayment(s, D1, 'p1');
+  assert.equal(live(after.debts).find((d) => d.id === D1).payments.length, 0);
+  assert.equal(live(after.transactions).some((t) => t.id === 'p1'), false);
+  assert.equal(linkDebtTransactions(after).transactions.filter((t) => t.id === 'p1' && !t.deleted).length, 0); // stays deleted
+  const gone = removeDebt(s, D1);
+  assert.equal(live(gone.debts).length, 1);
+  assert.equal(live(gone.transactions).some((t) => t.id === 'p1'), false);
+  assert.equal(accountSummaries(gone).total, 100000);
+});
+
+test('an optional payment fee is its own expense, does not reduce the debt, and goes away with the payment', () => {
+  let s = debtState();
+  const owe = s.debts.find((d) => d.id === D1);
+  const pid = '77777777-7777-4777-8777-777777777777', fid = '88888888-8888-4888-8888-888888888888';
+  s = addDebtPayment(s, owe, { id: pid, date: '2026-11-09', amount: 10000, accountId: DEFAULT_ACCOUNT_ID, note: '', fee: 500, feeId: fid, feeAccountId: DEFAULT_ACCOUNT_ID });
+  const fee = s.transactions.find((t) => t.id === fid);
+  assert.equal(fee.type, 'expense');
+  assert.equal(fee.amount, 500);
+  assert.equal(fee.categoryId, DEBT_FEE_CAT);
+  assert.equal(debtPaid(s.debts.find((d) => d.id === D1)), 30000); // 20000 earlier + 10000, the fee is not counted
+  assert.equal(accountSummaries(linkDebtTransactions(s)).total, 100000 - 20000 - 10000 - 500);
+  assert.equal(paymentOfTx(s, fid).isFee, true);
+  const back = sanitizeState(JSON.parse(JSON.stringify(s)));
+  assert.equal(back.debts[0].payments.at(-1).fee, 500);
+  const after = removeDebtPayment(s, D1, pid);
+  assert.equal(live(after.transactions).some((t) => t.id === fid || t.id === pid), false);
+  assert.equal(live(removeDebt(s, D1).transactions).some((t) => t.id === fid), false);
+  const noFee = addDebtPayment(debtState(), owe, { id: pid, date: '2026-11-09', amount: 1000, accountId: DEFAULT_ACCOUNT_ID, note: '', fee: 0 });
+  assert.equal(noFee.debts.find((d) => d.id === D1).payments.at(-1).fee, undefined);
 });

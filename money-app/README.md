@@ -187,3 +187,14 @@ The arrows (balance card, deck, month switcher) and the + button now use drawn i
 ## v40
 
 - Each profile's photo now shows in Settings > Family, the Switch profile window and the PIN screen (a coloured initial when there is no photo).
+
+## v41
+
+- **Debt payments are now transactions.** Paying a debt you owe saves an expense ("Paid Ali"), and being repaid saves an income ("Received from Sara"), in the account you pick (now required). They show in Activity, move the account balance and appear under two new categories, Debt payments and Debt repayments.
+- The debt and its transaction stay in step: editing the transaction's amount, date or account updates the debt; deleting the transaction (or the payment, or the whole debt) removes the other side too. A transaction from a debt cannot be changed to income/expense the other way round or above what the debt allows.
+- Payments you already saved with an account (v36 to v40) get their transaction automatically, once.
+- **Schema fix:** re-running `supabase/schema.sql` used to reset the primary keys and break syncing with "no unique or exclusion constraint matching the ON CONFLICT specification". The file now checks and repairs the keys every time it runs. If you saw that error, run the updated file once and it is fixed. It is safe to run as often as you like.
+
+## v42
+
+- Debt payments can have an optional **fee** (a bank or wallet charge). Type it in the payment window, and pick the account it is taken from (it starts as the payment's account). The fee is saved as its own expense in a "Payment fees" category, does not reduce the debt, and shows in the payment history. Deleting the fee's transaction keeps the payment; deleting the payment removes both. No SQL changes.

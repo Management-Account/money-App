@@ -276,6 +276,9 @@ export function cleanDebt(d) {
       amount: p.amount,
       accountId: typeof p.accountId === 'string' && UUID_RE.test(p.accountId) ? p.accountId : '',
       note: typeof p.note === 'string' ? p.note.slice(0, 120) : '',
+      ...(Number.isSafeInteger(p.fee) && p.fee > 0 && typeof p.feeId === 'string' && p.feeId
+        ? { fee: p.fee, feeId: p.feeId.slice(0, 40), feeAccountId: typeof p.feeAccountId === 'string' && UUID_RE.test(p.feeAccountId) ? p.feeAccountId : '' }
+        : {}),
     }));
   return {
     id: d.id,
@@ -303,14 +306,100 @@ export function debtTotals(state) {
   return out;
 }
 
-// Money a debt payment moved in or out of an account: paying what I owe takes money out, being repaid puts it in.
-export function debtAccountEvents(state) {
-  const ids = new Set(liveAccounts(state).map((a) => a.id));
-  const ev = [];
+// Every debt payment is also a real transaction (same id as the payment): paying what I owe is an expense,
+// being repaid is an income, both in the account chosen. That is how the account balance and the Activity list move.
+export const DEBT_PAY_CAT = '7d1c2b5e-3f4a-4c8d-9b1e-6a0f2d4c8e11';
+export const DEBT_GET_CAT = '2e9a6f40-b7c3-4d15-8a2e-5c1b9d3f7a22';
+export const DEBT_FEE_CAT = '9b4e1a77-c2d8-4f36-a5e0-3d7c8b1f6a33';
+
+function withDebtCategories(cats) {
+  const have = new Set(cats.map((c) => c.id));
+  const add = [];
+  if (!have.has(DEBT_PAY_CAT)) add.push({ id: DEBT_PAY_CAT, name: 'Debt payments', type: 'expense', emoji: '🤝', budget: 0, updatedAt: 0 });
+  if (!have.has(DEBT_GET_CAT)) add.push({ id: DEBT_GET_CAT, name: 'Debt repayments', type: 'income', emoji: '🤝', budget: 0, updatedAt: 0 });
+  if (!have.has(DEBT_FEE_CAT)) add.push({ id: DEBT_FEE_CAT, name: 'Payment fees', type: 'expense', emoji: '🧾', budget: 0, updatedAt: 0 });
+  return add.length ? [...cats, ...add] : cats;
+}
+
+const paymentTx = (d, p) => ({
+  id: p.id,
+  type: d.kind === 'owe' ? 'expense' : 'income',
+  amount: p.amount,
+  categoryId: d.kind === 'owe' ? DEBT_PAY_CAT : DEBT_GET_CAT,
+  accountId: p.accountId,
+  date: p.date,
+  note: `${d.kind === 'owe' ? 'Paid' : 'Received from'} ${d.person}${p.note ? `: ${p.note}` : ''}`.slice(0, 200),
+});
+
+// An optional fee on a payment (bank or wallet charge) is its own expense, taken from the account chosen for it.
+const feeTx = (d, p) => ({
+  id: p.feeId,
+  type: 'expense',
+  amount: p.fee,
+  categoryId: DEBT_FEE_CAT,
+  accountId: p.feeAccountId || p.accountId,
+  date: p.date,
+  note: `Fee: ${d.kind === 'owe' ? 'paying' : 'receiving from'} ${d.person}`.slice(0, 200),
+});
+
+// Record a payment on a debt and its transaction together.
+export function addDebtPayment(state, debt, payment) {
+  const p = { ...payment, id: payment.id || uid() };
+  if (p.fee > 0) p.feeId = p.feeId || uid();
+  else { delete p.fee; delete p.feeId; delete p.feeAccountId; }
+  let txs = p.accountId ? upsert(state.transactions, paymentTx(debt, p)) : state.transactions;
+  if (p.fee > 0 && p.accountId) txs = upsert(txs, feeTx(debt, p));
+  return {
+    ...state,
+    categories: withDebtCategories(state.categories),
+    debts: upsert(state.debts, { ...debt, payments: [...(debt.payments || []), p] }),
+    transactions: txs,
+  };
+}
+
+export function removeDebtPayment(state, debtId, paymentId) {
+  const d = (state.debts || []).find((x) => x.id === debtId && !x.deleted);
+  if (!d) return state;
+  const p = d.payments.find((x) => x.id === paymentId);
+  let txs = remove(state.transactions, paymentId);
+  if (p?.feeId) txs = remove(txs, p.feeId);
+  return { ...state, debts: upsert(state.debts, { ...d, payments: d.payments.filter((x) => x.id !== paymentId) }), transactions: txs };
+}
+
+export function removeDebt(state, debtId) {
+  const d = (state.debts || []).find((x) => x.id === debtId);
+  if (!d) return state;
+  const ids = new Set((d.payments || []).flatMap((p) => (p.feeId ? [p.id, p.feeId] : [p.id])));
+  const t = now();
+  return {
+    ...state,
+    debts: remove(state.debts, debtId),
+    transactions: state.transactions.map((x) => (ids.has(x.id) && !x.deleted ? { ...x, deleted: true, updatedAt: t } : x)),
+  };
+}
+
+// The debt payment a transaction belongs to, if any.
+export function paymentOfTx(state, txId) {
   for (const d of live(state.debts || [])) {
-    for (const p of d.payments || []) if (p.accountId && ids.has(p.accountId)) ev.push([p.date, p.accountId, d.kind === 'owed' ? p.amount : -p.amount]);
+    const p = (d.payments || []).find((x) => x.id === txId || (x.feeId && x.feeId === txId));
+    if (p) return { debt: d, payment: p, isFee: p.id !== txId };
   }
-  return ev;
+  return null;
+}
+
+// Payments saved before they became transactions (v36 to v39) get their transaction now. Safe to run any time:
+// the transaction id is the payment id, so it is never created twice, and one that was deleted stays deleted.
+export function linkDebtTransactions(state) {
+  const known = new Set((state.transactions || []).map((t) => t.id));
+  let txs = state.transactions;
+  let changed = false;
+  for (const d of live(state.debts || [])) {
+    for (const p of d.payments || []) {
+      if (p.accountId && !known.has(p.id)) { txs = [...txs, { ...paymentTx(d, p), updatedAt: 0 }]; known.add(p.id); changed = true; }
+      if (p.accountId && p.feeId && !known.has(p.feeId)) { txs = [...txs, { ...feeTx(d, p), updatedAt: 0 }]; known.add(p.feeId); changed = true; }
+    }
+  }
+  return changed ? { ...state, categories: withDebtCategories(state.categories), transactions: txs } : state;
 }
 
 // ---------- transfers ----------
@@ -416,9 +505,8 @@ export function accountSummaries(state) {
       else x.expense -= d;
     }
   }
-  for (const [, id, d] of debtAccountEvents(state)) { const x = rows.get(id); if (x) x.debt = (x.debt || 0) + d; }
   const accounts = [...rows.values()];
-  for (const r of accounts) r.balance = r.opening + r.income - r.expense + (r.debt || 0);
+  for (const r of accounts) r.balance = r.opening + r.income - r.expense;
   return { accounts, total: accounts.reduce((sum, r) => sum + r.balance, 0) };
 }
 
@@ -431,7 +519,6 @@ export function netWorthSeries(state, from, to, unit = unitFor(from, to)) {
     for (const [, delta] of accountDeltas(state, t)) d += delta;
     if (d) events.push([t.date, d]);
   }
-  for (const [date, , delta] of debtAccountEvents(state)) events.push([date, delta]);
   for (const d of live(state.debts || [])) {
     if (!d.inNetWorth) continue;
     const sign = d.kind === 'owed' ? 1 : -1;
